@@ -1,0 +1,207 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Status</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;800&display=swap" rel="stylesheet">
+
+<style>
+:root{
+  /* ---- marca ---- */
+  --primary:#073EAE;
+  --accent:#00DDFF;
+
+  /* ---- neutros ---- */
+  --paper:#FFFFFF;
+  --wash:#F7F9FC;        /* faixas alternadas, quase branco */
+  --ink:#0B1526;         /* quase preto, leve viés azul */
+  --ink-soft:#63718A;
+  --line:#E4E9F1;
+
+  /* ---- semântica ---- */
+  --ok:var(--primary);
+  --degraded:#B26C05;
+  --outage:#CE3226;
+  --maint:#5B54C9;
+
+  --font:"Sora",ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;background:var(--paper);color:var(--ink);
+  font-family:var(--font);font-size:15px;font-weight:400;line-height:1.55;
+  -webkit-font-smoothing:antialiased;
+}
+/* Sora não tem monoespaçada: numerais tabulares alinham os dados */
+.num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
+.wrap{max-width:940px;margin:0 auto;padding:0 24px}
+
+/* ---------- cabeçalho ---------- */
+.band{padding:56px 0 34px;border-bottom:1px solid var(--line)}
+.band .wrap{display:grid;gap:22px}
+.eyebrow{
+  margin:0;font-size:11px;font-weight:600;letter-spacing:.2em;
+  text-transform:uppercase;color:var(--primary);
+}
+.verdict{
+  margin:0;font-size:clamp(30px,6.4vw,56px);font-weight:800;
+  letter-spacing:-.042em;line-height:1.02;text-wrap:balance;
+}
+/* assinatura: o ciano é uma marca-texto atrás do veredito — é a única
+   forma em que #00ddff funciona sobre branco sem perder legibilidade */
+.verdict mark{
+  background:linear-gradient(180deg,transparent 58%,var(--accent) 58%,var(--accent) 94%,transparent 94%);
+  color:inherit;padding:0 .06em;
+}
+body[data-overall="major_outage"] .verdict mark{
+  background:linear-gradient(180deg,transparent 58%,#FFC9C4 58%,#FFC9C4 94%,transparent 94%);
+}
+.band-meta{
+  display:flex;flex-wrap:wrap;gap:10px 30px;
+  font-size:13px;color:var(--ink-soft);
+  border-top:1px solid var(--line);padding-top:16px;
+}
+.band-meta b{color:var(--ink);font-weight:600}
+
+/* ---------- blocos ---------- */
+.block{padding:38px 0}
+.block + .block{border-top:1px solid var(--line)}
+.block-head{
+  display:flex;align-items:baseline;justify-content:space-between;
+  gap:16px;margin-bottom:20px;flex-wrap:wrap;
+}
+.block-head h2{margin:0;font-size:12px;font-weight:600;letter-spacing:.18em;text-transform:uppercase}
+.block-head span{font-size:12.5px;font-weight:300;color:var(--ink-soft)}
+
+/* ---------- componentes ---------- */
+.comp{
+  background:var(--paper);border:1px solid var(--line);
+  border-radius:10px;padding:16px 18px 12px;margin-bottom:8px;
+}
+.comp-top{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+.comp-name{font-weight:600;font-size:15px;flex:1;min-width:0;letter-spacing:-.015em}
+.comp-uptime{font-size:13px;font-weight:600}
+.pill{
+  font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;
+  padding:4px 10px;border-radius:99px;white-space:nowrap;
+  color:#fff;background:var(--ok);
+}
+.s-operational{background:var(--primary)}
+.s-degraded,.s-partial_outage{background:var(--degraded)}
+.s-major_outage{background:var(--outage)}
+.s-maintenance{background:var(--maint)}
+
+/* ---------- sismógrafo: a assinatura ---------- */
+.seismo{display:block;width:100%;height:44px}
+.seismo rect{shape-rendering:crispEdges}
+.axis{display:flex;justify-content:space-between;font-size:10.5px;color:var(--ink-soft);margin-top:3px}
+
+/* ---------- simulador ---------- */
+.sim{
+  background:var(--wash);border:1px solid var(--line);
+  border-radius:10px;padding:20px;
+}
+.sim p{margin:0 0 16px;font-size:14px;font-weight:300;color:var(--ink-soft);max-width:58ch}
+.sim-actions{display:flex;gap:9px;flex-wrap:wrap}
+button{
+  font-family:var(--font);font-size:13px;font-weight:600;letter-spacing:-.01em;
+  padding:10px 16px;border-radius:7px;cursor:pointer;
+  border:1px solid var(--primary);background:var(--primary);color:#fff;
+  transition:background .15s,box-shadow .15s;
+}
+button:hover:not(:disabled){background:#0A4CD1}
+button.ghost{background:var(--paper);color:var(--primary);border-color:var(--line)}
+button.ghost:hover:not(:disabled){border-color:var(--primary);box-shadow:inset 0 -2px 0 var(--accent)}
+button:disabled{opacity:.36;cursor:not-allowed}
+button:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+.log{font-size:12.5px;margin-top:16px;border-top:1px dashed var(--line);padding-top:13px;display:grid;gap:6px}
+.log:empty{display:none}
+.log b{
+  font-weight:600;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--primary);background:rgba(0,221,255,.2);padding:1px 6px;border-radius:99px;
+}
+
+/* ---------- incidentes ---------- */
+.inc{border-top:1px solid var(--line);padding:20px 0}
+.inc:first-child{border-top:0;padding-top:0}
+.inc-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+.inc-title{font-weight:600;font-size:16.5px;letter-spacing:-.02em}
+.inc-dur{
+  font-size:12px;font-weight:600;padding:3px 9px;border-radius:99px;
+  background:rgba(0,221,255,.22);color:var(--primary);
+}
+.inc-dur.open{background:#FFE0DD;color:var(--outage)}
+.inc-scope{margin:5px 0 0;font-size:12px;font-weight:300;color:var(--ink-soft)}
+.updates{list-style:none;margin:13px 0 0;padding:0;display:grid;gap:10px}
+.updates li{
+  display:grid;grid-template-columns:62px 1fr;gap:14px;
+  font-size:14px;font-weight:300;padding-left:13px;border-left:1px solid var(--line);
+}
+.updates time{font-size:11.5px;color:var(--ink-soft);padding-top:3px}
+.updates b{font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;margin-right:8px}
+.updates li.st-resolved b{color:var(--primary)}
+.day{margin:26px 0 10px;font-size:11px;font-weight:600;letter-spacing:.14em;
+     text-transform:uppercase;color:var(--ink-soft)}
+footer{padding:28px 0 52px;font-size:11.5px;font-weight:300;color:var(--ink-soft);
+       border-top:1px solid var(--line)}
+
+@media (max-width:560px){
+  .updates li{grid-template-columns:1fr;gap:2px}
+  .band{padding:40px 0 28px}
+}
+@media (prefers-reduced-motion:no-preference){
+  .comp,.inc{animation:rise .4s cubic-bezier(.2,.7,.3,1) backwards}
+}
+@keyframes rise{from{opacity:0;transform:translateY(6px)}}
+
+/* ---------- estados: vazio, erro ---------- */
+.aviso{
+  border:1px solid var(--line);border-left:3px solid var(--primary);
+  background:var(--wash);border-radius:6px;padding:15px 17px;
+  font-size:13.5px;color:var(--ink-soft);line-height:1.65;
+}
+.aviso b{display:block;color:var(--ink);font-weight:600;margin-bottom:3px}
+.aviso code{
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;
+  background:var(--paper);border:1px solid var(--line);border-radius:4px;
+  padding:1px 5px;color:var(--ink);
+}
+#erro{border-left-color:var(--outage);margin-bottom:24px}
+#erro b{color:var(--outage)}
+#erro[hidden]{display:none}
+</style>
+
+<header class="band">
+  <div class="wrap">
+    <p class="eyebrow">Status dos serviços</p>
+    <h1 class="verdict" id="verdict">Todos os sistemas <mark>operacionais</mark></h1>
+    <div class="band-meta">
+      <span>Atualizado <b class="num" id="clock">—</b></span>
+      <span>Disponibilidade 90 dias <b class="num" id="agg">—</b></span>
+      <span>Meta de SLA <b class="num">99,9%</b></span>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="aviso" id="erro" hidden></div>
+
+  <section class="block">
+    <div class="block-head">
+      <h2>Componentes</h2>
+      <span>últimos <b id="janela">90</b> dias · a linha afunda conforme a duração da queda</span>
+    </div>
+    <div id="components"></div>
+  </section>
+
+  <section class="block">
+    <div class="block-head"><h2>Histórico de incidentes</h2></div>
+    <div id="incidents"></div>
+  </section>
+</main>
+
+<footer class="wrap">Horários em BRT (UTC−3).</footer>
+
+<script src="/app.js" defer></script>
+

@@ -1,0 +1,299 @@
+{
+  "name": "Status â€” Ingestao de disponibilidade",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "telegram-trigger",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -620,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "status/cloudwatch",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-sns",
+      "name": "Webhook SNS",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -620,
+        20
+      ],
+      "webhookId": "status-cloudwatch"
+    },
+    {
+      "parameters": {
+        "mailbox": "INBOX",
+        "postProcessAction": "read",
+        "format": "simple",
+        "options": {}
+      },
+      "id": "e-mail-imap",
+      "name": "E-mail IMAP",
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 2,
+      "position": [
+        -620,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "/**\n * n8n Code node — CloudWatch (Telegram + SNS)\n * ---------------------------------------------------------------------------\n * Modo: \"Run Once for All Items\"  (o IMAP/SNS pode entregar varios de uma vez)\n *\n * Entra: item cru do Telegram Trigger OU do Webhook (assinatura SNS).\n * Sai:   payload plano no contrato de ingest_health(jsonb), mais um campo\n *        `_route` para o Switch decidir o destino:\n *\n *          ingest       -> no Postgres:  select * from ingest_health($1::jsonb)\n *          confirm_sns  -> HTTP Request GET {{ $json.subscribeUrl }}\n *          skip         -> NoOp\n *\n * NAO derivamos slug nem ambiente aqui de proposito. Quem faz isso e\n * split_environment() no banco (discovery.sql). Assim, quando aparecer um\n * sufixo \"-uat\" novo, e um INSERT em environment_aliases -- nao um deploy do\n * n8n. O parser so entrega `resource` e deixa o banco decidir.\n *\n * Sem require(): o Code node do n8n so libera modulos nativos se\n * NODE_FUNCTION_ALLOW_BUILTIN estiver setado. O hash e implementado aqui.\n * ---------------------------------------------------------------------------\n */\n\n// Opcional (Decisao em aberto no.3): trave o webhook com um token compartilhado.\n// Deixe null para desligar. Se usar, mande o header no SNS via \"Delivery policy\"\n// ou ponha o token na querystring do endpoint assinado.\nconst WEBHOOK_TOKEN = null;   // ex.: 'troque-isto'\n\nconst ESTADOS = new Set(['ALARM', 'OK', 'INSUFFICIENT_DATA']);\n\n/* -------------------------------------------------------------------------\n * hash determinista de 64 bits (cyrb64), sem dependencia externa.\n * Calculado sobre o CONTEUDO do evento, nunca sobre o envelope: assim a\n * reentrega do SNS e a reexecucao do n8n produzem o mesmo hash e\n * webhook_deliveries descarta a segunda.\n * ---------------------------------------------------------------------- */\nfunction hash64(texto) {\n  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;\n  const s = String(texto);\n  for (let i = 0; i < s.length; i++) {\n    const c = s.charCodeAt(i);\n    h1 = Math.imul(h1 ^ c, 2654435761);\n    h2 = Math.imul(h2 ^ c, 1597334677);\n  }\n  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);\n  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);\n  return (h2 >>> 0).toString(16).padStart(8, '0') + (h1 >>> 0).toString(16).padStart(8, '0');\n}\n\n/* -------------------------------------------------------------------------\n * O CloudWatch manda StateChangeTime como \"2026-08-24T18:11:31.123+0000\".\n * ISO 8601 quer \"+00:00\". O V8 aceita os dois, mas outros runtimes nao --\n * normalizar aqui evita um Invalid Date silencioso que viraria now() no banco\n * e mentiria sobre o inicio da queda.\n * ---------------------------------------------------------------------- */\nfunction paraIso(valor) {\n  if (!valor) return null;\n  const t = String(valor).trim().replace(/([+-]\\d{2})(\\d{2})$/, '$1:$2');\n  const d = new Date(t);\n  return isNaN(d.getTime()) ? null : d.toISOString();\n}\n\n/* -------------------------------------------------------------------------\n * \"RWTech - ElasticBeanstalk - EnvironmentHealth - api-tarefa-megas-producao\"\n *  └─org─┘   └──plataforma──┘   └───metrica────┘   └─────── recurso ───────┘\n *\n * Corta em \" - \" (com espacos). O recurso tem hifens internos e nao pode ser\n * quebrado por eles. Le da direita para a esquerda: o recurso e sempre o\n * ultimo pedaco, mesmo que o nome tenha mais segmentos do que o previsto.\n * ---------------------------------------------------------------------- */\nfunction partesDoAlarme(nome) {\n  const p = String(nome || '').split(/\\s+-\\s+/).map(s => s.trim()).filter(Boolean);\n  const n = p.length;\n  return {\n    org:      n >= 4 ? p[0]     : null,\n    platform: n >= 3 ? p[n - 3] : null,\n    metric:   n >= 2 ? p[n - 2] : null,\n    resource: n >= 1 ? p[n - 1] : String(nome || '').trim(),\n  };\n}\n\nfunction pular(motivo, extra) {\n  return { json: Object.assign({ _route: 'skip', _reason: motivo }, extra || {}) };\n}\n\n/* -------------------------------------------------------------------------\n * Monta o payload final. `fingerprint` e o nome COMPLETO do alarme, sem o\n * prefixo de estado -- e o que amarra o [ALARM] ao [OK] depois.\n * ---------------------------------------------------------------------- */\nfunction montar({ estado, nomeAlarme, occurredAt, timeSource, transport,\n                  metric, resource, reason, title, awsDimension }) {\n  const partes = partesDoAlarme(nomeAlarme);\n\n  return {\n    _route: 'ingest',\n\n    source:      'cloudwatch',\n    transport,                                   // sns | telegram\n    state:       estado,\n    fingerprint: nomeAlarme,\n    occurredAt,\n    timeSource,                                  // fica em health_events.raw\n\n    org:      partes.org,\n    platform: partes.platform,\n    metric:   metric   || partes.metric,\n    resource: resource || partes.resource,\n\n    // Dimensao real do CloudWatch. Nao substitui `resource` -- o nome do\n    // alarme e a convencao da casa. Vai junto porque, quando alguem cria um\n    // alarme fora do padrao, e o que permite julgar na discovery_inbox.\n    awsDimension: awsDimension || null,\n\n    title:  title  || null,\n    reason: reason || null,\n\n    // conteudo, nao envelope\n    deliveryHash: hash64([nomeAlarme, estado, occurredAt].join('|')),\n  };\n}\n\n/* =========================================================================\n * Telegram\n *\n * \"[OK] RWTech - ElasticBeanstalk - EnvironmentHealth - api-tarefa-megas-producao\"\n *\n * Limitacao da API: bot nao le mensagem de outro bot por padrao. So funciona\n * com Bot-to-Bot Communication Mode ativado no @BotFather + Group Privacy\n * desativado + bot admin do grupo.\n *\n * O `date` do Telegram e a hora da ENTREGA, nao a do evento. Por isso\n * timeSource marca 'telegram_delivery': atraso do Telegram infla o MTTR e\n * isso precisa ficar rastreavel.\n * ====================================================================== */\nfunction doTelegram(j) {\n  const msg = j.message || j.channel_post || j.edited_message || j;\n  const texto = msg.text || msg.caption || j.text;\n  if (!texto) return pular('mensagem do Telegram sem texto');\n\n  const m = String(texto).match(/^\\s*\\[([A-Za-z_ ]+)\\]\\s*(.+?)\\s*$/s);\n  if (!m) return pular('texto sem prefixo [ESTADO]', { texto: String(texto).slice(0, 200) });\n\n  const estado = m[1].trim().toUpperCase().replace(/\\s+/g, '_');\n  if (!ESTADOS.has(estado)) return pular(`estado desconhecido: ${estado}`);\n\n  const nomeAlarme = m[2].split(/\\r?\\n/)[0].trim();\n  if (!nomeAlarme) return pular('sem nome de alarme');\n\n  const occurredAt = msg.date\n    ? new Date(Number(msg.date) * 1000).toISOString()\n    : new Date().toISOString();\n\n  return { json: montar({\n    estado, nomeAlarme, occurredAt,\n    timeSource: 'telegram_delivery',   // hora da entrega, nao do evento\n    transport: 'telegram',\n  }) };\n}\n\n/* =========================================================================\n * SNS via Webhook\n *\n * Pegadinha: o SNS posta com Content-Type \"text/plain; charset=UTF-8\", entao\n * o n8n costuma entregar `body` como STRING, nao objeto. Tratamos os dois.\n * ====================================================================== */\nfunction doSns(j) {\n  if (WEBHOOK_TOKEN) {\n    const h = j.headers || {};\n    const q = j.query || {};\n    const enviado = h['x-status-token'] || h['X-Status-Token'] || q.token;\n    if (enviado !== WEBHOOK_TOKEN) return pular('token invalido');\n  }\n\n  let env = j.body !== undefined ? j.body : j;\n  if (typeof env === 'string') {\n    try { env = JSON.parse(env); } catch (e) { return pular('corpo nao e JSON'); }\n  }\n  if (!env || typeof env !== 'object') return pular('corpo vazio');\n\n  const tipo = env.Type || env.type;\n\n  // Assinatura nova: precisa de um GET no SubscribeURL para confirmar.\n  if (tipo === 'SubscriptionConfirmation') {\n    return { json: {\n      _route: 'confirm_sns',\n      subscribeUrl: env.SubscribeURL,\n      topicArn: env.TopicArn,\n    } };\n  }\n\n  if (tipo === 'UnsubscribeConfirmation') return pular('UnsubscribeConfirmation');\n  if (tipo && tipo !== 'Notification') return pular(`tipo SNS ignorado: ${tipo}`);\n\n  let corpo = env.Message;\n  if (typeof corpo === 'string') {\n    try { corpo = JSON.parse(corpo); } catch (e) { corpo = null; }\n  }\n  if (!corpo || !corpo.AlarmName) {\n    return pular('Notification que nao e alarme do CloudWatch');\n  }\n\n  const estado = String(corpo.NewStateValue || '').toUpperCase();\n  if (!ESTADOS.has(estado)) return pular(`estado desconhecido: ${estado}`);\n\n  // StateChangeTime e a hora REAL do evento -- a razao de o SNS ser o\n  // transporte preferido. Se faltar, cai para o Timestamp do envelope.\n  const occurredAt = paraIso(corpo.StateChangeTime) || paraIso(env.Timestamp);\n  const temHoraReal = Boolean(paraIso(corpo.StateChangeTime));\n\n  const dim = (corpo.Trigger && Array.isArray(corpo.Trigger.Dimensions))\n    ? corpo.Trigger.Dimensions.find(d => /environment|instance|loadbalancer|queue/i.test(d.name || ''))\n    : null;\n\n  return { json: montar({\n    estado,\n    nomeAlarme: String(corpo.AlarmName).trim(),\n    occurredAt: occurredAt || new Date().toISOString(),\n    timeSource: temHoraReal ? 'StateChangeTime' : 'sns_envelope',\n    transport: 'sns',\n    metric: corpo.Trigger && corpo.Trigger.MetricName,\n    reason: corpo.NewStateReason,\n    title: corpo.AlarmDescription || null,\n    awsDimension: dim ? dim.value : null,\n  }) };\n}\n\n/* ===================================================================== */\nconst entrada = (typeof items !== 'undefined') ? items : $input.all();\nconst saida = [];\n\nfor (const item of entrada) {\n  const j = item.json || {};\n  try {\n    // Telegram tem `message`/`channel_post`; webhook tem `body`/`headers`.\n    const ehTelegram = Boolean(j.message || j.channel_post || j.edited_message || j.update_id);\n    saida.push(ehTelegram ? doTelegram(j) : doSns(j));\n  } catch (e) {\n    saida.push(pular(`erro no parser: ${e.message}`));\n  }\n}\n\nreturn saida;\n"
+      },
+      "id": "normaliza-cloudwatch",
+      "name": "Normaliza CloudWatch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -340,
+        -70
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "/**\n * n8n Code node — Elastic Beanstalk Environment Health (por e-mail)\n * ---------------------------------------------------------------------------\n * Modo: \"Run Once for All Items\"  (o IMAP entrega varios e-mails de uma vez)\n *\n * Entra: item do IMAP Email Trigger (ou o mesmo corpo chegando via SNS).\n * Sai:   payload no contrato de ingest_health(jsonb) + `_route` para o Switch.\n *\n * Corpo tipico:\n *\n *   Timestamp: Mon Aug 24 15:11:31 UTC 2026\n *   Message: Environment health has transitioned from Info to Degraded.\n *     Application update in progress on 1 out of 4 instances.\n *   Environment: Api-Fechamento-env\n *   Application: Api-Fechamento-Validacao\n *   NotificationProcessId: 1a2b3c...\n *\n * Aqui NAO existe par ALARM/OK. E uma maquina de estados:\n *   Ok(0) · Info(1) · Unknown(2) · Warning(3) · Degraded(4) · Severe(5)\n * Quem decide o que abre incidente e ingest_health() no banco, comparando com\n * incident_threshold(). O parser so normaliza e entrega.\n *\n * Sem require(): o Code node so libera modulos nativos com\n * NODE_FUNCTION_ALLOW_BUILTIN setado.\n * ---------------------------------------------------------------------------\n */\n\n// \"No Data\" tem ESPACO no texto da AWS. Comparamos sem separadores para que\n// 'No Data', 'no_data' e 'NoData' resolvam todos para o mesmo estado.\nconst ESTADOS_EB = ['Ok','Info','Pending','Unknown','No Data','Suspended','Warning','Degraded','Severe'];\nconst CHAVE = s => String(s).toLowerCase().replace(/[\\s_-]+/g, '');\n\n// Alternancia explicita em vez de [A-Za-z]+: um estado com espaco quebraria\n// a captura e a mensagem inteira seria descartada em silencio.\nconst RE_TRANSICAO = new RegExp(\n  'health has transitioned from\\\\s+(' + ESTADOS_EB.join('|') + ')' +\n  '\\\\s+to\\\\s+(' + ESTADOS_EB.join('|') + ')\\\\b', 'i');\n\n// Avisos de deploy que NAO trazem transicao de saude junto.\nconst RE_DEPLOY = /new application version was deployed|was deployed to running|environment update completed successfully/i;\n\nfunction hash64(texto) {\n  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;\n  const s = String(texto);\n  for (let i = 0; i < s.length; i++) {\n    const c = s.charCodeAt(i);\n    h1 = Math.imul(h1 ^ c, 2654435761);\n    h2 = Math.imul(h2 ^ c, 1597334677);\n  }\n  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);\n  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);\n  return (h2 >>> 0).toString(16).padStart(8, '0') + (h1 >>> 0).toString(16).padStart(8, '0');\n}\n\nfunction pular(motivo, extra) {\n  return { json: Object.assign({ _route: 'skip', _reason: motivo }, extra || {}) };\n}\n\n/* -------------------------------------------------------------------------\n * O corpo do e-mail pode vir em campos diferentes conforme o modo do no IMAP\n * (Simple/RAW) e a versao. Procura o texto puro; se so houver HTML, limpa as\n * tags. Ordem importa: textPlain antes de textHtml.\n * ---------------------------------------------------------------------- */\nfunction extrairTexto(j) {\n  const puro = j.textPlain || j.text || (j.body && j.body.text) || j.snippet;\n  if (typeof puro === 'string' && puro.trim()) return puro;\n\n  const html = j.textHtml || j.html || (j.body && j.body.html);\n  if (typeof html === 'string' && html.trim()) {\n    return html\n      .replace(/<(script|style)[\\s\\S]*?<\\/\\1>/gi, ' ')\n      .replace(/<br\\s*\\/?>/gi, '\\n')\n      .replace(/<\\/(p|div|tr|li|h\\d)>/gi, '\\n')\n      .replace(/<[^>]+>/g, '')\n      .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')\n      .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '\"');\n  }\n\n  // mesmo corpo chegando por SNS em vez de e-mail\n  let env = j.body;\n  if (typeof env === 'string') { try { env = JSON.parse(env); } catch (e) { return j.body; } }\n  if (env && typeof env.Message === 'string') return env.Message;\n\n  return null;\n}\n\n/* -------------------------------------------------------------------------\n * Le o bloco \"Chave: valor\". O valor de `Message:` costuma quebrar em varias\n * linhas -- por isso o acumulador: uma linha so vira chave nova se casar o\n * padrao no INICIO; o resto e continuacao do valor anterior.\n * ---------------------------------------------------------------------- */\nfunction lerCampos(texto) {\n  const campos = {};\n  let atual = null;\n\n  for (const bruta of String(texto).split(/\\r?\\n/)) {\n    const linha = bruta.trim();\n    const m = linha.match(/^([A-Z][A-Za-z0-9 _-]{2,40}):\\s*(.*)$/);\n\n    if (m) {\n      atual = m[1].trim().replace(/\\s+/g, '');   // \"Environment URL\" -> \"EnvironmentURL\"\n      campos[atual] = m[2].trim();\n    } else if (atual && linha) {\n      campos[atual] = (campos[atual] ? campos[atual] + ' ' : '') + linha;\n    } else if (!linha) {\n      atual = null;                              // linha em branco encerra o valor\n    }\n  }\n  return campos;\n}\n\n/* -------------------------------------------------------------------------\n * \"Mon Aug 24 15:11:31 UTC 2026\" -- formato do Date.toString() do Java, que e\n * o que a AWS manda. new Date() do V8 aceita, mas nao e garantido em todo\n * runtime; um Invalid Date aqui viraria now() no banco e mentiria sobre o\n * inicio do incidente. Por isso o parser explicito, com o nativo como reserva.\n * ---------------------------------------------------------------------- */\nconst MESES = { Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11 };\n\nfunction paraIso(valor) {\n  if (!valor) return null;\n  const t = String(valor).trim();\n\n  const m = t.match(/^[A-Za-z]{3}\\s+([A-Za-z]{3})\\s+(\\d{1,2})\\s+(\\d{2}):(\\d{2}):(\\d{2})\\s+([A-Z]{2,4})\\s+(\\d{4})$/);\n  if (m && MESES[m[1]] !== undefined && m[6] === 'UTC') {\n    return new Date(Date.UTC(+m[7], MESES[m[1]], +m[2], +m[3], +m[4], +m[5])).toISOString();\n  }\n\n  const d = new Date(t.replace(/([+-]\\d{2})(\\d{2})$/, '$1:$2'));\n  return isNaN(d.getTime()) ? null : d.toISOString();\n}\n\nfunction normalizarEstado(s) {\n  if (!s) return null;\n  return ESTADOS_EB.find(e => CHAVE(e) === CHAVE(s)) || null;\n}\n\n/* ===================================================================== */\nconst entrada = (typeof items !== 'undefined') ? items : $input.all();\nconst saida = [];\n\nfor (const item of entrada) {\n  const j = item.json || {};\n\n  try {\n    const texto = extrairTexto(j);\n    if (!texto) { saida.push(pular('e-mail sem corpo legivel')); continue; }\n\n    const campos = lerCampos(texto);\n    const mensagem = campos.Message || texto;\n\n    // A frase e a fonte mais confiavel do par de estados; os campos soltos\n    // sao o reforco quando o layout do e-mail mudar.\n    const transicao = mensagem.match(RE_TRANSICAO);\n\n    const fromState = normalizarEstado(transicao ? transicao[1] : campos.FromState);\n    const toState   = normalizarEstado(transicao ? transicao[2] : (campos.ToState || campos.Status));\n\n    // Aviso de deploy sem transicao de saude junto. Nao e ruido: e o unico\n    // sinal INEQUIVOCO de deploy no feed -- o resto depende de adivinhar\n    // frase dentro da mensagem de saude. Vai para a trilha como marco.\n    const marcoDeploy = !toState && RE_DEPLOY.test(mensagem);\n\n    if (!toState && !marcoDeploy) {\n      saida.push(pular('e-mail sem transicao de saude reconhecivel',\n                       { amostra: String(mensagem).slice(0, 200) }));\n      continue;\n    }\n\n    const environmentName = campos.Environment || campos.EnvironmentName;\n    if (!environmentName) {\n      saida.push(pular('e-mail sem Environment'));\n      continue;\n    }\n\n    // Do CORPO (\"Timestamp:\"), nunca da data de recebimento: o atraso do IMAP\n    // inflaria o MTTR.\n    const doCorpo = paraIso(campos.Timestamp);\n    const occurredAt = doCorpo\n      || paraIso(j.date || j.receivedDate || (j.metadata && j.metadata.date))\n      || new Date().toISOString();\n\n    const npid = campos.NotificationProcessId || campos.NotificationProcessID || null;\n\n    saida.push({ json: {\n      _route: 'ingest',\n\n      source:      'beanstalk',\n      transport:   'email',\n      eventType:   marcoDeploy ? 'deploy' : 'health',\n      occurredAt,\n      timeSource:  doCorpo ? 'body_timestamp' : 'email_delivery',\n\n      environmentName,\n      applicationName: campos.Application || campos.ApplicationName || null,\n\n      fromState,\n      toState,\n      message: mensagem,\n\n      // Dedup natural do Beanstalk. Quando falta, o hash de conteudo cobre.\n      notificationProcessId: npid,\n      deliveryHash: hash64([environmentName, fromState, toState, occurredAt].join('|')),\n    } });\n\n  } catch (e) {\n    saida.push(pular(`erro no parser: ${e.message}`));\n  }\n}\n\nreturn saida;\n"
+      },
+      "id": "normaliza-beanstalk",
+      "name": "Normaliza Beanstalk",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -340,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r-ingest",
+                    "leftValue": "={{ $json._route }}",
+                    "rightValue": "ingest",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "ingest"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r-confirm",
+                    "leftValue": "={{ $json._route }}",
+                    "rightValue": "confirm_sns",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "confirm_sns"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r-skip",
+                    "leftValue": "={{ $json._route }}",
+                    "rightValue": "skip",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "skip"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "switch",
+      "name": "Switch",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -60,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select * from ingest_health($1::jsonb)",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($json)] }}"
+        }
+      },
+      "id": "postgres-ingest-health",
+      "name": "Postgres: ingest_health",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        220,
+        -140
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.subscribeUrl }}",
+        "options": {}
+      },
+      "id": "confirma-assinatura-sns",
+      "name": "Confirma assinatura SNS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        60
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "nao-e-alarme",
+      "name": "Nao e alarme",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        220,
+        260
+      ]
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normaliza CloudWatch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook SNS": {
+      "main": [
+        [
+          {
+            "node": "Normaliza CloudWatch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "E-mail IMAP": {
+      "main": [
+        [
+          {
+            "node": "Normaliza Beanstalk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normaliza CloudWatch": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normaliza Beanstalk": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Postgres: ingest_health",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Confirma assinatura SNS",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Nao e alarme",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

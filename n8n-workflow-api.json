@@ -1,0 +1,97 @@
+{
+  "name": "Status — API publica",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "status",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-status",
+      "name": "Webhook status",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -400,
+        0
+      ],
+      "webhookId": "status-publico"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select status_json() as payload",
+        "options": {}
+      },
+      "id": "postgres-status-json",
+      "name": "Postgres: status_json",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        -120,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.payload }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              },
+              {
+                "name": "Cache-Control",
+                "value": "public, max-age=60"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "responde-json",
+      "name": "Responde JSON",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        160,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook status": {
+      "main": [
+        [
+          {
+            "node": "Postgres: status_json",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: status_json": {
+      "main": [
+        [
+          {
+            "node": "Responde JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

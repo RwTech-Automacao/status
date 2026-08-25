@@ -1,0 +1,12 @@
+﻿# Segredos NUNCA no repositorio: senha do Neon, token do n8n, senha do site.
+# Eles vivem no painel do Vercel (Settings -> Environment Variables).
+.env
+.env.local
+.env.*.local
+!.env.example
+
+node_modules/
+.vercel/
+.DS_Store
+Thumbs.db
+*.log

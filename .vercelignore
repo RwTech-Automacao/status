@@ -1,0 +1,14 @@
+﻿# O Vercel sobe TUDO que nao estiver aqui -- e serve como arquivo estatico.
+# Sem isto, status.rwtech.com.br/schema.sql baixaria o schema inteiro.
+*.sql
+*.test.js
+build-workflow.js
+n8n-code-node.js
+n8n-code-beanstalk.js
+n8n-workflow.json
+n8n-workflow-api.json
+CLAUDE.md
+README.md
+.env
+.env.*
+!.env.example
