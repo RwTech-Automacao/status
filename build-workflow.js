@@ -1,4 +1,4 @@
-﻿const fs = require('fs');
+const fs = require('fs');
 const dir = __dirname + '/';
 
 const codigoCw = fs.readFileSync(dir + 'n8n-code-node.js', 'utf8');

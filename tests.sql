@@ -1,4 +1,4 @@
-﻿-- =====================================================================
+-- =====================================================================
 --  tests.sql  ·  Testes de fumaca do motor de correlacao
 --
 --  Roda contra um banco VAZIO, carregado na ordem:

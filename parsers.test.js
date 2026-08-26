@@ -1,4 +1,4 @@
-﻿const fs = require('fs');
+const fs = require('fs');
 const path = __dirname + '/';
 
 // Os Code nodes terminam com `return saida;` no topo -- e exatamente como o

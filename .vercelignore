@@ -1,4 +1,4 @@
-﻿# O Vercel sobe TUDO que nao estiver aqui -- e serve como arquivo estatico.
+# O Vercel sobe TUDO que nao estiver aqui -- e serve como arquivo estatico.
 # Sem isto, status.rwtech.com.br/schema.sql baixaria o schema inteiro.
 *.sql
 *.test.js
