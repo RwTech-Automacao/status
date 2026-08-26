@@ -1,0 +1,123 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Entrar · Status RWTech</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;600;800&display=swap" rel="stylesheet">
+
+<style>
+:root{
+  --primary:#073EAE;
+  --accent:#00DDFF;
+  --paper:#FFFFFF;
+  --wash:#F7F9FC;
+  --ink:#0B1526;
+  --ink-soft:#63718A;
+  --line:#E4E9F1;
+  --outage:#CE3226;
+  --font:"Sora",ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;min-height:100vh;background:var(--wash);color:var(--ink);
+  font-family:var(--font);font-size:15px;font-weight:400;line-height:1.55;
+  -webkit-font-smoothing:antialiased;
+  display:grid;place-items:center;padding:24px;
+}
+
+.card{
+  width:100%;max-width:400px;background:var(--paper);
+  border:1px solid var(--line);border-radius:10px;
+  padding:38px 34px 30px;
+  box-shadow:0 1px 2px rgba(11,21,38,.04),0 12px 32px -12px rgba(11,21,38,.10);
+}
+
+.eyebrow{
+  margin:0 0 14px;font-size:11px;font-weight:600;letter-spacing:.2em;
+  text-transform:uppercase;color:var(--primary);
+}
+
+/* Mesma assinatura da página de status: o ciano só funciona sobre branco
+   como marca-texto atrás do texto -- nunca como cor de letra ou borda. */
+h1{
+  margin:0 0 8px;font-size:31px;font-weight:800;
+  letter-spacing:-.035em;line-height:1.1;
+}
+h1 mark{
+  background:linear-gradient(180deg,transparent 58%,var(--accent) 58%,var(--accent) 94%,transparent 94%);
+  color:inherit;padding:0 .06em;
+}
+.sub{margin:0 0 26px;font-size:14px;color:var(--ink-soft)}
+
+.erro{
+  display:none;margin:0 0 20px;padding:11px 13px;
+  background:#FFF1F0;border:1px solid #F5C6C2;border-left:3px solid var(--outage);
+  border-radius:6px;font-size:13.5px;color:#8C2018;
+}
+body[data-erro] .erro{display:block}
+
+label{
+  display:block;margin-bottom:6px;
+  font-size:12.5px;font-weight:600;color:var(--ink);
+}
+.campo{margin-bottom:16px}
+input{
+  width:100%;padding:11px 13px;
+  font-family:inherit;font-size:15px;color:var(--ink);
+  background:var(--paper);border:1px solid var(--line);border-radius:6px;
+  transition:border-color .12s,box-shadow .12s;
+}
+input::placeholder{color:#A6B0C2}
+input:focus{
+  outline:none;border-color:var(--primary);
+  box-shadow:0 0 0 3px rgba(7,62,174,.12);
+}
+
+button{
+  width:100%;margin-top:8px;padding:12px 16px;
+  font-family:inherit;font-size:14.5px;font-weight:600;color:#fff;
+  background:var(--primary);border:1px solid var(--primary);border-radius:6px;
+  cursor:pointer;transition:background .12s,transform .06s;
+}
+button:hover{background:#062F86}
+button:active{transform:translateY(1px)}
+button:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(7,62,174,.28)}
+
+.rodape{
+  margin:22px 0 0;padding-top:18px;border-top:1px solid var(--line);
+  font-size:12.5px;color:var(--ink-soft);line-height:1.6;
+}
+</style>
+
+<main class="card">
+  <p class="eyebrow">Status dos serviços</p>
+  <h1>Área <mark>interna</mark></h1>
+  <p class="sub">Monitoramento de disponibilidade da RWTech.</p>
+
+  <p class="erro" id="erro">Usuário ou senha incorretos.</p>
+
+  <form method="POST" action="/api/login">
+    <input type="hidden" name="next" id="next" value="/">
+
+    <div class="campo">
+      <label for="usuario">Usuário</label>
+      <input id="usuario" name="usuario" type="text" autocomplete="username"
+             autocapitalize="none" spellcheck="false" required autofocus>
+    </div>
+
+    <div class="campo">
+      <label for="senha">Senha</label>
+      <input id="senha" name="senha" type="password"
+             autocomplete="current-password" required>
+    </div>
+
+    <button type="submit">Entrar</button>
+  </form>
+
+  <p class="rodape">A sessão dura 12 horas. Trocar a senha no Vercel encerra
+     todas as sessões abertas.</p>
+</main>
+
+<script src="/login.js" defer></script>

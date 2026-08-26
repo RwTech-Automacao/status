@@ -1,63 +1,61 @@
 /**
- * middleware.js — login da página de status
+ * middleware.js — portão da página de status
  * ---------------------------------------------------------------------------
- * Autenticação HTTP Basic, rodando na borda do Vercel, ANTES de qualquer
- * arquivo ser servido. Protege tanto a página quanto /api/status — o proxy
- * fica atrás do mesmo portão, senão o login não valeria nada.
+ * Roda na borda do Vercel, ANTES de qualquer arquivo ser servido. Protege a
+ * página E o /api/status: o proxy precisa ficar atrás do mesmo portão, senão
+ * bastaria chamar /api/status direto e o login não valeria nada.
  *
- * Basic Auth é modesto de propósito. Para uma página interna de time
- * pequeno, sobre HTTPS, ele resolve sem trazer banco de usuários, sessão,
- * recuperação de senha e um provedor a mais para manter. Quando a página
- * virar pública (é o destino dela — `public_components` já existe para
- * isso), basta esvaziar STATUS_USER e o portão se abre sozinho.
+ * Autenticação por FORMULÁRIO, não HTTP Basic. Basic Auth exibe a caixa
+ * nativa do navegador, que não é estilizável e não tem como fazer logout.
+ * Aqui a tela é nossa e a sessão é um cookie assinado (ver lib/sessao.js).
  *
- * Se um dia precisar de SSO de verdade, o caminho é pôr Cloudflare Access
- * ou o Vercel Authentication na frente — e apagar este arquivo.
+ * Sem STATUS_USER configurado, o site fica aberto. É deliberado: página
+ * pública é o destino final deste projeto (`public_components` existe
+ * para isso), e um deploy novo não deve se trancar sozinho.
  *
  * Variáveis de ambiente (painel do Vercel):
  *   STATUS_USER   usuário
- *   STATUS_PASS   senha
- *
- * Sem STATUS_USER definido, o site fica aberto. É deliberado: a página
- * pública é o objetivo final, e um deploy novo não deve travar sozinho.
+ *   STATUS_PASS   senha — também deriva a chave que assina a sessão
  */
 
+import { lerCookie, tokenValido } from './lib/sessao.js';
+
 export const config = {
-  // Tudo, menos os assets internos do Vercel.
-  matcher: ['/((?!_vercel|favicon\\.ico).*)'],
+  matcher: ['/((?!_vercel/insights|favicon\\.ico).*)'],
 };
 
-export default function middleware(req) {
+// Rotas que precisam ficar de fora, senão o redirecionamento vira laço:
+// quem não está logado é mandado para /login, que também exigiria login.
+const ABERTAS = new Set([
+  '/login', '/login.html', '/login.js',
+  '/api/login', '/api/logout',
+]);
+
+export default async function middleware(req) {
   const usuario = process.env.STATUS_USER;
   const senha   = process.env.STATUS_PASS;
 
-  if (!usuario) return;   // sem credencial configurada = página aberta
+  if (!usuario) return;                       // sem credencial = site aberto
 
-  const cabecalho = req.headers.get('authorization') || '';
-  const esperado  = 'Basic ' + btoa(`${usuario}:${senha ?? ''}`);
+  const url = new URL(req.url);
+  if (ABERTAS.has(url.pathname)) return;
 
-  if (!igual(cabecalho, esperado)) {
-    return new Response('Acesso restrito.', {
+  if (await tokenValido(lerCookie(req), usuario, senha ?? '')) return;
+
+  // Chamada de dados que expirou merece 401, não uma página de login em
+  // HTML -- senão o fetch() da página recebe o formulário como se fosse
+  // JSON e o erro que aparece na tela seria um "unexpected token <".
+  if (url.pathname.startsWith('/api/')) {
+    return new Response(JSON.stringify({ erro: 'sessao expirada' }), {
       status: 401,
-      headers: {
-        'WWW-Authenticate': 'Basic realm="Status RWTech", charset="UTF-8"',
-        'cache-control': 'no-store',
-      },
+      headers: { 'content-type': 'application/json; charset=utf-8',
+                 'cache-control': 'no-store' },
     });
   }
-}
 
-/**
- * Comparação de tempo constante.
- *
- * `a === b` sai no primeiro caractere diferente, e essa diferença de tempo
- * é mensurável pela rede. Comparar tudo sempre, acumulando as diferenças
- * com XOR, remove o canal. É barato e a alternativa é uma nota de rodapé
- * numa auditoria futura.
- */
-function igual(a, b) {
-  if (a.length !== b.length) return false;
-  let d = 0;
-  for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return d === 0;
+  const destino = new URL('/login', url);
+  if (url.pathname !== '/') {
+    destino.searchParams.set('next', url.pathname + url.search);
+  }
+  return Response.redirect(destino, 302);
 }

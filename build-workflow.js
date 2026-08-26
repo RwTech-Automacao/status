@@ -1,5 +1,5 @@
-const fs = require('fs');
-const dir = __dirname + '/';
+import fs from 'node:fs';
+const dir = import.meta.dirname + '/';
 
 const codigoCw = fs.readFileSync(dir + 'n8n-code-node.js', 'utf8');
 const codigoEb = fs.readFileSync(dir + 'n8n-code-beanstalk.js', 'utf8');

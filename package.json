@@ -1,0 +1,10 @@
+{
+  "name": "rwtech-status",
+  "private": true,
+  "type": "module",
+  "description": "Monitoramento de disponibilidade dos servicos RWTech",
+  "scripts": {
+    "test": "node parsers.test.js && node pagina.test.js",
+    "build:workflows": "node build-workflow.js"
+  }
+}

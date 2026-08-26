@@ -1,8 +1,8 @@
 // Roda o <script> real do status.html contra um DOM simulado, alimentado
 // por um payload real de status_json(). Nao e um navegador, mas exercita
 // render(), barras() e o tratamento de erro de verdade.
-const fs = require('fs');
-const script = fs.readFileSync(__dirname + '/public/app.js', 'utf8');
+import fs from 'node:fs';
+const script = fs.readFileSync(import.meta.dirname + '/public/app.js', 'utf8');
 const payload = JSON.parse(fs.readFileSync(process.argv[2], 'utf8').replace(/^\uFEFF/, ''));
 
 

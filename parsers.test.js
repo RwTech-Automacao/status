@@ -1,5 +1,5 @@
-const fs = require('fs');
-const path = __dirname + '/';
+import fs from 'node:fs';
+const path = import.meta.dirname + '/';
 
 // Os Code nodes terminam com `return saida;` no topo -- e exatamente como o
 // n8n os executa. Reproduzimos isso com new Function, injetando `items`.

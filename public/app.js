@@ -141,6 +141,15 @@ function render(d){
 async function carregar(){
   try{
     const r = await fetch(API);
+
+    // Sessão de 12h expirada. Sem este desvio, a página ficaria mostrando
+    // uma caixa de erro genérica até alguém pensar em recarregar — quando
+    // o certo é simplesmente pedir para entrar de novo.
+    if(r.status === 401){
+      location.href = '/login?next=' + encodeURIComponent(location.pathname);
+      return;
+    }
+
     if(!r.ok) throw new Error('HTTP ' + r.status);
     render(await r.json());
     $('erro').hidden = true;
