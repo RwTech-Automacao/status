@@ -19,7 +19,12 @@
   --line:#E4E9F1;
 
   /* ---- semântica ---- */
-  --ok:var(--primary);
+  /* Verde, e não o azul da marca. Mesmo princípio que tirou o vermelho e o
+     âmbar da paleta: status é dos poucos contextos onde a convenção vale
+     mais que a identidade -- ninguém precisa aprender o que verde quer
+     dizer. O ciano continua sendo a assinatura, no marca-texto e na linha
+     de base do gráfico. */
+  --ok:#0E9A6C;
   --degraded:#B26C05;
   --outage:#CE3226;
   --maint:#5B54C9;
@@ -40,6 +45,28 @@ body{
 /* ---------- cabeçalho ---------- */
 .band{padding:56px 0 34px;border-bottom:1px solid var(--line)}
 .band .wrap{display:grid;gap:22px}
+.farol{
+  display:inline-flex;align-items:center;gap:8px;
+  font-size:12px;font-weight:600;color:var(--ok);
+}
+.farol::before{
+  content:"";width:9px;height:9px;border-radius:50%;
+  background:var(--ok);box-shadow:0 0 0 3px rgba(14,154,108,.18);
+}
+body[data-overall="degraded"] .farol,
+body[data-overall="partial_outage"] .farol{color:var(--degraded)}
+body[data-overall="degraded"] .farol::before,
+body[data-overall="partial_outage"] .farol::before{
+  background:var(--degraded);box-shadow:0 0 0 3px rgba(178,108,5,.18)}
+body[data-overall="major_outage"] .farol{color:var(--outage)}
+body[data-overall="major_outage"] .farol::before{
+  background:var(--outage);box-shadow:0 0 0 3px rgba(206,50,38,.18)}
+
+/* Sem componente publicado não há o que afirmar. Farol verde dizendo
+   "aguardando dados" seria uma contradição: cinza é a resposta honesta. */
+.farol.neutro{color:var(--ink-soft)}
+.farol.neutro::before{background:#B6C0D0;box-shadow:0 0 0 3px rgba(99,113,138,.14)}
+
 .eyebrow{
   margin:0;font-size:11px;font-weight:600;letter-spacing:.2em;
   text-transform:uppercase;color:var(--primary);
@@ -87,7 +114,7 @@ body[data-overall="major_outage"] .verdict mark{
   padding:4px 10px;border-radius:99px;white-space:nowrap;
   color:#fff;background:var(--ok);
 }
-.s-operational{background:var(--primary)}
+.s-operational{background:var(--ok)}
 .s-degraded,.s-partial_outage{background:var(--degraded)}
 .s-major_outage{background:var(--outage)}
 .s-maintenance{background:var(--maint)}
@@ -183,6 +210,7 @@ footer a:hover{text-decoration:underline}
       <span>Atualizado <b class="num" id="clock">—</b></span>
       <span>Disponibilidade 90 dias <b class="num" id="agg">—</b></span>
       <span>Meta de SLA <b class="num">99,9%</b></span>
+      <span class="farol" id="farol">Tudo operacional</span>
     </div>
   </div>
 </header>

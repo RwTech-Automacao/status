@@ -90,6 +90,15 @@ function render(d){
   $('agg').textContent   = pct(d.uptime_janela);
   $('janela').textContent = d.janela_dias;
 
+  // O farol dá a resposta antes de a pessoa ler qualquer número. A cor sai
+  // do CSS por data-overall; aqui só o texto.
+  const temDados = (d.componentes || []).length > 0;
+  const farol = $('farol');
+  farol.textContent = abertos
+    ? (abertos === 1 ? '1 incidente em andamento' : abertos + ' incidentes em andamento')
+    : temDados ? 'Tudo operacional' : 'Aguardando dados';
+  farol.className = 'farol' + (temDados || abertos ? '' : ' neutro');
+
   // ---- componentes ----
   const comps = d.componentes || [];
   $('components').innerHTML = comps.length ? comps.map(c =>

@@ -85,6 +85,7 @@ const tick = () => new Promise(r => setImmediate(r));
      el.clock.textContent + ' vs ' + esperado);
   ok('2.23 janela e dado, nao texto fixo', el.janela.textContent === 90);
   ok('2.24 caixa de erro escondida', el.erro.hidden === true);
+  ok('2.24b farol conta os abertos', el.farol.textContent === '1 incidente em andamento', el.farol.textContent);
   ok('2.25 recarrega a cada 60s', timers[0] === 60000, timers[0]);
 
   console.log('\n--- banco vazio (o estado de agora) ---');
@@ -97,6 +98,7 @@ const tick = () => new Promise(r => setImmediate(r));
   ok('3.3 uptime nulo vira travessao',
      vazio.el.agg.textContent === '\u2014', JSON.stringify(vazio.el.agg.textContent));
   ok('3.4 diz que nao houve incidente', /Nenhum incidente/.test(vazio.el.incidents.innerHTML));
+  ok('3.5 farol nao mente com banco vazio', vazio.el.farol.textContent === 'Aguardando dados', vazio.el.farol.textContent);
 
   console.log('\n--- API fora do ar ---');
   const erro = rodar(null, { falha: true });
