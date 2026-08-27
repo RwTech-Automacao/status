@@ -133,6 +133,34 @@ const workflowApi = {
          query: 'select status_json() as payload',
          options: {} }),
 
+    // ---- tela operacional (interna) ----
+    // Endpoint separado porque a exposição é outra: picos_json_req devolve
+    // todos os ambientes e a mensagem crua da AWS. Depende do login no
+    // middleware do Vercel -- nunca deve ser aberto junto com /status.
+    no('Webhook picos', 'n8n-nodes-base.webhook', 2, [-400, 200],
+       { httpMethod: 'GET', path: 'picos',
+         responseMode: 'responseNode', options: {} },
+       { webhookId: 'status-picos' }),
+
+    // A querystring inteira vai como UM parâmetro jsonb, igual à ingestão.
+    // São três valores possíveis (de, ate, janela) e placeholder posicional
+    // é onde o n8n quebra em silêncio.
+    no('Postgres: picos_json', 'n8n-nodes-base.postgres', 2.4, [-120, 200],
+       { operation: 'executeQuery',
+         query: 'select picos_json_req($1::jsonb) as payload',
+         options: { queryReplacement: '={{ [JSON.stringify($json.query || {})] }}' } }),
+
+    no('Responde picos', 'n8n-nodes-base.respondToWebhook', 1.1, [160, 200], {
+      respondWith: 'json',
+      responseBody: '={{ $json.payload }}',
+      options: { responseHeaders: { entries: [
+        { name: 'Access-Control-Allow-Origin', value: '*' },
+        // Dado interno e parametrizado: não pode ficar em cache compartilhado
+        { name: 'Cache-Control', value: 'no-store' },
+        { name: 'Content-Type', value: 'application/json; charset=utf-8' },
+      ] } },
+    }),
+
     no('Responde JSON', 'n8n-nodes-base.respondToWebhook', 1.1, [160, 0], {
       respondWith: 'json',
       responseBody: '={{ $json.payload }}',
@@ -148,6 +176,8 @@ const workflowApi = {
   connections: {
     'Webhook status':        { main: [[{ node: 'Postgres: status_json', type: 'main', index: 0 }]] },
     'Postgres: status_json': { main: [[{ node: 'Responde JSON',         type: 'main', index: 0 }]] },
+    'Webhook picos':         { main: [[{ node: 'Postgres: picos_json',  type: 'main', index: 0 }]] },
+    'Postgres: picos_json':  { main: [[{ node: 'Responde picos',        type: 'main', index: 0 }]] },
   },
   settings: { executionOrder: 'v1' },
   pinData: {},

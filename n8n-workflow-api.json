@@ -35,6 +35,72 @@
     },
     {
       "parameters": {
+        "httpMethod": "GET",
+        "path": "picos",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-picos",
+      "name": "Webhook picos",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -400,
+        200
+      ],
+      "webhookId": "status-picos"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select picos_json_req($1::jsonb) as payload",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($json.query || {})] }}"
+        }
+      },
+      "id": "postgres-picos-json",
+      "name": "Postgres: picos_json",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        -120,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.payload }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              },
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "responde-picos",
+      "name": "Responde picos",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        160,
+        200
+      ]
+    },
+    {
+      "parameters": {
         "respondWith": "json",
         "responseBody": "={{ $json.payload }}",
         "options": {
@@ -83,6 +149,28 @@
         [
           {
             "node": "Responde JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook picos": {
+      "main": [
+        [
+          {
+            "node": "Postgres: picos_json",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: picos_json": {
+      "main": [
+        [
+          {
+            "node": "Responde picos",
             "type": "main",
             "index": 0
           }

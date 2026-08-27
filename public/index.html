@@ -67,6 +67,9 @@ body[data-overall="major_outage"] .farol::before{
 .farol.neutro{color:var(--ink-soft)}
 .farol.neutro::before{background:#B6C0D0;box-shadow:0 0 0 3px rgba(99,113,138,.14)}
 
+.ir-picos{margin-left:14px;color:var(--ink-soft);text-decoration:none;
+  font-weight:600;letter-spacing:0;text-transform:none;font-size:11.5px}
+.ir-picos:hover{color:var(--primary)}
 .eyebrow{
   margin:0;font-size:11px;font-weight:600;letter-spacing:.2em;
   text-transform:uppercase;color:var(--primary);
@@ -204,7 +207,7 @@ footer a:hover{text-decoration:underline}
 
 <header class="band">
   <div class="wrap">
-    <p class="eyebrow">Status dos serviços</p>
+    <p class="eyebrow">Status dos serviços <a class="ir-picos" href="/picos">ver picos &rarr;</a></p>
     <h1 class="verdict" id="verdict">Todos os sistemas <mark>operacionais</mark></h1>
     <div class="band-meta">
       <span>Atualizado <b class="num" id="clock">—</b></span>

@@ -211,3 +211,103 @@ $fn$;
 
 comment on function picos_json(timestamptz, timestamptz, text, int) is
   'Visão operacional interna. Contém mensagem crua da AWS -- NUNCA expor sem autenticação.';
+
+-- ---------------------------------------------------------------------
+-- 4. Janelas nomeadas
+--
+-- "hoje" e "ontem" são calculados AQUI, em America/Sao_Paulo, e não no
+-- navegador. Se a página resolvesse, quem abrisse de outro fuso veria
+-- outro "hoje" -- e dois colegas olhando o mesmo link discordariam sobre
+-- qual dia tiveram mais pico. Mesmo princípio da cor das barras: quem
+-- decide é o banco, a página só desenha.
+-- ---------------------------------------------------------------------
+create or replace function janela_nomeada(
+  p_janela text,
+  p_tz     text default 'America/Sao_Paulo'
+) returns table (de timestamptz, ate timestamptz, rotulo text)
+language sql stable as $fn$
+  with hoje as (
+    select ((now() at time zone p_tz)::date)::timestamp at time zone p_tz as inicio_do_dia
+  )
+  select * from (
+    select case lower(coalesce(p_janela, '3h'))
+             when '1h'    then now() - interval '1 hour'
+             when '3h'    then now() - interval '3 hours'
+             when '6h'    then now() - interval '6 hours'
+             when '12h'   then now() - interval '12 hours'
+             when '24h'   then now() - interval '24 hours'
+             when 'hoje'  then h.inicio_do_dia
+             when 'ontem' then h.inicio_do_dia - interval '1 day'
+             when '7d'    then now() - interval '7 days'
+             when '30d'   then now() - interval '30 days'
+             else              now() - interval '3 hours'
+           end,
+           case lower(coalesce(p_janela, '3h'))
+             when 'ontem' then h.inicio_do_dia
+             else              now()
+           end,
+           case lower(coalesce(p_janela, '3h'))
+             when '1h' then 'Última hora'      when '3h'  then 'Últimas 3 horas'
+             when '6h' then 'Últimas 6 horas'  when '12h' then 'Últimas 12 horas'
+             when '24h' then 'Últimas 24 horas'
+             when 'hoje' then 'Hoje'           when 'ontem' then 'Ontem'
+             when '7d' then 'Últimos 7 dias'   when '30d' then 'Últimos 30 dias'
+             else 'Últimas 3 horas'
+           end
+      from hoje h
+  ) x;
+$fn$;
+
+-- ---------------------------------------------------------------------
+-- 5. picos_json_req(jsonb) -- a porta que o n8n chama
+--
+-- Um parâmetro só, como na ingestão: `select picos_json_req($1::jsonb)`
+-- com a querystring inteira. Placeholder posicional é onde o n8n quebra
+-- em silêncio, e aqui seriam três.
+--
+-- Aceita { "janela": "ontem" } ou { "de": "...", "ate": "..." }.
+-- ---------------------------------------------------------------------
+create or replace function picos_json_req(p jsonb default '{}'::jsonb)
+returns jsonb
+language plpgsql stable as $fn$
+declare
+  v_de   timestamptz;
+  v_ate  timestamptz;
+  v_rot  text;
+  v_tz   text := coalesce(nullif(p->>'tz',''), 'America/Sao_Paulo');
+  v_max  interval := interval '31 days';
+begin
+  -- Intervalo explícito vence a janela nomeada.
+  begin
+    v_de  := nullif(p->>'de','')::timestamptz;
+    v_ate := nullif(p->>'ate','')::timestamptz;
+  exception when others then
+    v_de := null; v_ate := null;    -- data ilegível cai no padrão, não estoura
+  end;
+
+  if v_de is null or v_ate is null then
+    select j.de, j.ate, j.rotulo into v_de, v_ate, v_rot
+      from janela_nomeada(p->>'janela', v_tz) j;
+  else
+    v_rot := 'Período escolhido';
+  end if;
+
+  if v_ate <= v_de then
+    v_ate := v_de + interval '1 hour';
+  end if;
+
+  -- Teto de 31 dias. A consulta varre health_events pela janela; sem limite,
+  -- um "de=1970" na URL viraria uma varredura completa a cada carregamento.
+  if v_ate - v_de > v_max then
+    v_de  := v_ate - v_max;
+    v_rot := v_rot || ' (recortado em 31 dias)';
+  end if;
+
+  return picos_json(v_de, v_ate, v_tz) || jsonb_build_object(
+    'rotulo', v_rot,
+    'janela', coalesce(p->>'janela', case when p ? 'de' then 'custom' else '3h' end)
+  );
+end $fn$;
+
+comment on function picos_json_req(jsonb) is
+  'Porta da tela operacional. n8n: select picos_json_req($1::jsonb)';

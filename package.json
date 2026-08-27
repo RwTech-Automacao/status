@@ -4,7 +4,7 @@
   "type": "module",
   "description": "Monitoramento de disponibilidade dos servicos RWTech",
   "scripts": {
-    "test": "node parsers.test.js && node pagina.test.js",
+    "test": "node parsers.test.js && node auth.test.js",
     "build:workflows": "node build-workflow.js"
   }
 }
