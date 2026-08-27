@@ -172,6 +172,52 @@ ok('dep.4 saude normal continua marcada como health', e1.eventType, 'health');
 ok('dep.5 alerta de teste do Grafana e descartado',
    eb([{ textPlain: 'Someone is testing the alert notification within Grafana.' }])[0].json._route, 'skip');
 
+// ---- Beanstalk chegando por WEBHOOK, nao por e-mail ----
+// E por aqui que os Severe vao entrar quando a KXC ligar o SNS. O mesmo
+// corpo, outro involucro: o parser tem que reconhecer os dois.
+const corpoSevere = [
+  'Timestamp: Mon Aug 24 20:00:00 UTC 2026',
+  'Message: Environment health has transitioned from Ok to Severe.',
+  '  100.0 % of the requests are failing with HTTP 5xx.',
+  'Environment: Api-Fechamento-env',
+  'Application: Api-Fechamento-Producao',
+  'NotificationProcessId: npid-sns-1',
+].join('\n');
+
+const snsEb = { Type: 'Notification', MessageId: 'm-eb-1',
+                Message: corpoSevere, Timestamp: '2026-08-24T20:00:12.000Z' };
+
+const w1 = eb([{ body: snsEb, headers: {} }])[0].json;
+ok('sns.eb.1 reconhece Beanstalk vindo por SNS', w1._route, 'ingest');
+ok('sns.eb.2 estado extraido',      w1.toState, 'Severe');
+ok('sns.eb.3 transporte marcado',   w1.transport, 'sns');
+ok('sns.eb.4 hora do corpo vence',  w1.occurredAt, '2026-08-24T20:00:00.000Z');
+ok('sns.eb.5 ambiente lido',        w1.environmentName, 'Api-Fechamento-env');
+
+// corpo como STRING (o SNS posta text/plain)
+const w2 = eb([{ body: JSON.stringify(snsEb), headers: {} }])[0].json;
+ok('sns.eb.6 corpo como string funciona igual', w2.deliveryHash, w1.deliveryHash);
+
+// sem "Timestamp:" no corpo, cai no envelope do SNS -- nao no relogio local
+const semTs = { Type: 'Notification',
+  Message: 'Environment health has transitioned from Ok to Severe.\nEnvironment: Api-X-env',
+  Timestamp: '2026-08-24T21:30:00.000Z' };
+const w3 = eb([{ body: semTs }])[0].json;
+ok('sns.eb.7 reserva e o envelope, nao now()', w3.occurredAt, '2026-08-24T21:30:00.000Z');
+ok('sns.eb.8 fonte da hora rastreada',         w3.timeSource, 'sns_envelope');
+
+// ---- os dois parsers sao mutuamente exclusivos ----
+// O webhook alimenta ambos; cada um precisa recusar o que nao e seu, senao
+// o mesmo evento entraria duas vezes.
+ok('excl.1 CloudWatch recusa corpo do Beanstalk',
+   cw([{ body: snsEb, headers: {} }])[0].json._route, 'skip');
+ok('excl.2 Beanstalk recusa alarme do CloudWatch',
+   eb([{ body: envelope, headers: {} }])[0].json._route, 'skip');
+ok('excl.3 Beanstalk recusa confirmacao de assinatura',
+   eb([{ body: { Type: 'SubscriptionConfirmation', SubscribeURL: 'https://x' } }])[0].json._route, 'skip');
+ok('excl.4 CloudWatch continua aceitando o que e dele',
+   cw([{ body: envelope, headers: {} }])[0].json._route, 'ingest');
+
 // lote: o IMAP entrega varios de uma vez
 const lote = eb([{ textPlain: corpoEmail }, { textPlain: 'lixo' }, { textPlain: corpoEmail }]);
 ok('eb.18 lote preserva a ordem e o tamanho',

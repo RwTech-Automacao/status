@@ -61,27 +61,49 @@ function pular(motivo, extra) {
  * (Simple/RAW) e a versao. Procura o texto puro; se so houver HTML, limpa as
  * tags. Ordem importa: textPlain antes de textHtml.
  * ---------------------------------------------------------------------- */
+function limparHtml(html) {
+  return html
+    .replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|tr|li|h\d)>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
+}
+
+/**
+ * Devolve { texto, transporte, envelope }.
+ *
+ * O MESMO aviso do Beanstalk chega por dois caminhos: e-mail (IMAP) e SNS
+ * (webhook). O corpo é idêntico -- muda só o invólucro. Saber por qual veio
+ * importa para a hora: no e-mail a reserva é a data de recebimento; no SNS
+ * é o Timestamp do envelope, que é bem mais próximo do evento real.
+ */
 function extrairTexto(j) {
   const puro = j.textPlain || j.text || (j.body && j.body.text) || j.snippet;
-  if (typeof puro === 'string' && puro.trim()) return puro;
+  if (typeof puro === 'string' && puro.trim()) {
+    return { texto: puro, transporte: 'email', envelope: null };
+  }
 
   const html = j.textHtml || j.html || (j.body && j.body.html);
   if (typeof html === 'string' && html.trim()) {
-    return html
-      .replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ')
-      .replace(/<br\s*\/?>/gi, '\n')
-      .replace(/<\/(p|div|tr|li|h\d)>/gi, '\n')
-      .replace(/<[^>]+>/g, '')
-      .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
+    return { texto: limparHtml(html), transporte: 'email', envelope: null };
   }
 
   // mesmo corpo chegando por SNS em vez de e-mail
   let env = j.body;
-  if (typeof env === 'string') { try { env = JSON.parse(env); } catch (e) { return j.body; } }
-  if (env && typeof env.Message === 'string') return env.Message;
+  if (typeof env === 'string') {
+    try { env = JSON.parse(env); }
+    catch (e) { return { texto: j.body, transporte: 'webhook', envelope: null }; }
+  }
+  if (env && typeof env.Message === 'string') {
+    return { texto: env.Message, transporte: 'sns', envelope: env };
+  }
+  if (env && typeof env === 'object' && typeof env.message === 'string') {
+    return { texto: env.message, transporte: 'webhook', envelope: env };
+  }
 
-  return null;
+  return { texto: null, transporte: null, envelope: null };
 }
 
 /* -------------------------------------------------------------------------
@@ -143,11 +165,11 @@ for (const item of entrada) {
   const j = item.json || {};
 
   try {
-    const texto = extrairTexto(j);
-    if (!texto) { saida.push(pular('e-mail sem corpo legivel')); continue; }
+    const fonte = extrairTexto(j);
+    if (!fonte.texto) { saida.push(pular('sem corpo legivel')); continue; }
 
-    const campos = lerCampos(texto);
-    const mensagem = campos.Message || texto;
+    const campos = lerCampos(fonte.texto);
+    const mensagem = campos.Message || fonte.texto;
 
     // A frase e a fonte mais confiavel do par de estados; os campos soltos
     // sao o reforco quando o layout do e-mail mudar.
@@ -173,12 +195,19 @@ for (const item of entrada) {
       continue;
     }
 
-    // Do CORPO ("Timestamp:"), nunca da data de recebimento: o atraso do IMAP
-    // inflaria o MTTR.
+    // Do CORPO ("Timestamp:"), nunca da hora de entrega: o atraso do IMAP
+    // inflaria o MTTR. As reservas dependem do transporte -- o Timestamp do
+    // envelope SNS é bem melhor que a data de um e-mail que ficou na fila.
     const doCorpo = paraIso(campos.Timestamp);
-    const occurredAt = doCorpo
+    const doEnvelope = fonte.envelope ? paraIso(fonte.envelope.Timestamp) : null;
+    const occurredAt = doCorpo || doEnvelope
       || paraIso(j.date || j.receivedDate || (j.metadata && j.metadata.date))
       || new Date().toISOString();
+
+    const timeSource = doCorpo    ? 'body_timestamp'
+                     : doEnvelope ? 'sns_envelope'
+                     : fonte.transporte === 'email' ? 'email_delivery'
+                     : 'webhook_delivery';
 
     const npid = campos.NotificationProcessId || campos.NotificationProcessID || null;
 
@@ -186,10 +215,10 @@ for (const item of entrada) {
       _route: 'ingest',
 
       source:      'beanstalk',
-      transport:   'email',
+      transport:   fonte.transporte,
       eventType:   marcoDeploy ? 'deploy' : 'health',
       occurredAt,
-      timeSource:  doCorpo ? 'body_timestamp' : 'email_delivery',
+      timeSource,
 
       environmentName,
       applicationName: campos.Application || campos.ApplicationName || null,

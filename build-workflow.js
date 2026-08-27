@@ -70,9 +70,23 @@ const workflow = {
   ],
 
   connections: {
-    'Telegram Trigger':      { main: [[{ node: 'Normaliza CloudWatch', type: 'main', index: 0 }]] },
-    'Webhook SNS':           { main: [[{ node: 'Normaliza CloudWatch', type: 'main', index: 0 }]] },
-    'E-mail IMAP':           { main: [[{ node: 'Normaliza Beanstalk',  type: 'main', index: 0 }]] },
+    'Telegram Trigger': { main: [[{ node: 'Normaliza CloudWatch', type: 'main', index: 0 }]] },
+
+    // O webhook alimenta os DOIS normalizadores porque não se sabe de
+    // antemão o que vem nele: alarme do CloudWatch ou aviso de saúde do
+    // Beanstalk (é por onde chegam os Severe). Cada parser descarta o que
+    // não é seu -- eles são mutuamente exclusivos: um exige AlarmName no
+    // Message, o outro exige "health has transitioned". O item rejeitado
+    // sai como _route:'skip' e morre no NoOp.
+    //
+    // Se algum dia os dois reivindicassem o mesmo evento, o deliveryHash
+    // em webhook_deliveries impediria a gravação em dobro.
+    'Webhook SNS': { main: [[
+      { node: 'Normaliza CloudWatch', type: 'main', index: 0 },
+      { node: 'Normaliza Beanstalk',  type: 'main', index: 0 },
+    ]] },
+
+    'E-mail IMAP': { main: [[{ node: 'Normaliza Beanstalk', type: 'main', index: 0 }]] },
     'Normaliza CloudWatch':  { main: [[{ node: 'Switch', type: 'main', index: 0 }]] },
     'Normaliza Beanstalk':   { main: [[{ node: 'Switch', type: 'main', index: 0 }]] },
     'Switch': {
