@@ -86,9 +86,10 @@ create or replace function split_environment(p_raw text)
 returns table (slug text, environment text, matched boolean)
 language plpgsql stable as $fn$
 declare
-  v_slug  text;
-  v_token text;
-  v_env   text;
+  v_slug      text;
+  v_token     text;
+  v_penultimo text;
+  v_env       text;
 begin
   v_slug := slugify(p_raw);
 
@@ -110,9 +111,32 @@ begin
     -- so remove se houver o que sobrar depois: "producao" sozinho continua "producao"
     v_slug := coalesce(nullif(regexp_replace(v_slug, '-' || v_token || '$', ''), ''), v_slug);
     return query select v_slug, v_env, true;
-  else
-    return query select v_slug, setting_text('default_environment','producao'), false;
   end if;
+
+  -- Sufixo numerado: "Api-blue-comandos-prod-2" e a SEGUNDA instancia de
+  -- producao, nao um servico chamado "...-prod-2". Olhando so o ultimo
+  -- pedaco, o "2" escondia o "prod" e o ambiente caia no padrao -- com o
+  -- "prod" preso dentro do slug, exatamente onde a Decisao no.2 diz que
+  -- ele nao pode ficar. O numero continua no slug: e ele que distingue
+  -- uma instancia da outra.
+  if v_token ~ '^[0-9]+$' then
+    v_penultimo := substring(v_slug from '([a-z0-9]+)-[0-9]+$');
+
+    select ea.environment into v_env
+      from environment_aliases ea
+     where ea.token = v_penultimo;
+
+    if v_env is not null then
+      v_slug := coalesce(
+        nullif(regexp_replace(v_slug,
+                 '-' || v_penultimo || '-' || v_token || '$',
+                 '-' || v_token), ''),
+        v_slug);
+      return query select v_slug, v_env, true;
+    end if;
+  end if;
+
+  return query select v_slug, setting_text('default_environment','producao'), false;
 end $fn$;
 
 -- ---------------------------------------------------------------------
