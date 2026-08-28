@@ -104,7 +104,13 @@ language sql stable as $fn$
     select he.id, he.component_id, he.occurred_at, he.severity, he.is_deploy,
            he.from_state, he.to_state, he.message, he.incident_id,
            c.slug, c.name, c.environment,
-           (he.severity >= 3 and he.severity < j.limiar and he.incident_id is null) as e_pico
+           -- PICO: warning solto, sem incidente por tras. E o sintoma que
+           -- o ranking procura -- "a API piscou".
+           (he.severity >= 3 and he.severity < j.limiar and he.incident_id is null) as e_pico,
+           -- WARNING: todo evento na faixa, inclusive os que aconteceram
+           -- DENTRO de uma queda aberta ("estava fora e melhorou um pouco").
+           -- Sempre >= picos; a diferenca sao os que a queda absorveu.
+           (he.severity >= 3 and he.severity < j.limiar) as e_warning
       from health_events he
       join components c on c.id = he.component_id
      cross join j
@@ -123,6 +129,7 @@ language sql stable as $fn$
   resumo as (
     select c.id, c.slug, c.name, c.environment, c.published,
            count(*) filter (where ev.e_pico)                          as picos,
+           count(*) filter (where ev.e_warning)                       as warnings,
            count(*) filter (where ev.e_pico and not ev.is_deploy)     as fora_de_deploy,
            count(*) filter (where ev.e_pico and ev.is_deploy)         as em_deploy,
            count(*) filter (where ev.incident_id is not null
@@ -167,6 +174,7 @@ language sql stable as $fn$
                'ambiente',        r.environment,
                'publicado',       r.published,
                'picos',           r.picos,
+               'warnings',        r.warnings,
                'fora_de_deploy',  r.fora_de_deploy,
                'em_deploy',       r.em_deploy,
                'quedas',          r.eventos_de_queda,

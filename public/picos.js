@@ -103,7 +103,10 @@ function ranking(comps){
   $('ranking').innerHTML =
     '<table><thead><tr>' +
       '<th>Serviço</th><th class="n">Picos</th><th class="n">Fora de deploy</th>' +
-      '<th class="n">Em deploy</th><th class="n">Tempo em warning</th>' +
+      '<th class="n">Em deploy</th>' +
+      // contagem e tempo lado a lado: o par so diz alguma coisa junto.
+      // 12 warnings de 2 min e outra historia que 2 warnings de 12 min.
+      '<th class="n">Warnings</th><th class="n">Tempo em warning</th>' +
       '<th class="n">Quedas</th><th class="n">Tempo fora</th><th class="n">Último</th>' +
     '</tr></thead><tbody>' +
     comps.map(c =>
@@ -116,7 +119,12 @@ function ranking(comps){
         '<td class="n num">' + c.picos + '</td>' +
         '<td class="n num"><b>' + c.fora_de_deploy + '</b></td>' +
         '<td class="n num mut">' + c.em_deploy + '</td>' +
-        '<td class="n num">' + minutos(c.min_em_warning) + '</td>' +
+        // `warnings` conta TUDO na faixa; `picos` exclui os que aconteceram
+        // dentro de uma queda ja aberta. Quando batem, nao repete o numero.
+        '<td class="n num' + (c.warnings ? '' : ' mut') + '">' +
+          (c.warnings ?? c.picos) + '</td>' +
+        '<td class="n num' + (c.min_em_warning ? '' : ' mut') + '">' +
+          minutos(c.min_em_warning) + '</td>' +
         '<td class="n num' + (c.quedas ? '' : ' mut') + '">' + c.quedas + '</td>' +
         // tempo de RELOGIO no estado ruim, nao ponderado: esta e a tela de
         // operacao, onde o que importa e quanto tempo doeu -- nao quanto

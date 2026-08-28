@@ -107,6 +107,19 @@ const tick = () => new Promise(r => setImmediate(r));
   // Tempo de queda: RELOGIO no estado ruim, nao ponderado. Esta e a tela de
   // operacao -- o que importa e quanto tempo doeu, nao quanto pesa no SLA.
   ok('2.16b tem coluna de tempo fora', /Tempo fora/.test(r));
+  ok('2.16b2 tem coluna de warnings', /<th class="n">Warnings<\/th>/.test(r));
+
+  // `warnings` conta TUDO na faixa; `picos` exclui os que aconteceram
+  // dentro de uma queda aberta. A diferenca conta outra historia: um
+  // servico com 1 pico e 20 warnings nao esta piscando -- esta caindo e
+  // oscilando, e o ranking de picos escondia isso.
+  const divergem = payload.componentes.filter(c => c.warnings !== c.picos);
+  ok('2.16b3 warnings nunca e menor que picos',
+     payload.componentes.every(c => c.warnings >= c.picos));
+  ok('2.16b4 a diferenca aparece na tela',
+     divergem.length === 0 ||
+     divergem.every(c => r.includes('>' + c.warnings + '<')),
+     divergem.length + ' divergem');
   const comQueda = payload.componentes.filter(c => c.min_em_queda > 0).length;
   ok('2.16c ... preenchida em quem caiu', comQueda === 0 || /min<\/td>|h<\/td>/.test(r), comQueda);
 
