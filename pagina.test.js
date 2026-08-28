@@ -57,14 +57,28 @@ const tick = () => new Promise(r => setImmediate(r));
   ok('2.8 90 barras por componente', barras === 180, barras);
 
   console.log('\n--- cores vindas do banco ---');
-  ok('2.9 dia de 8400s pintou vermelho', /var\(--outage\)/.test(comps));
-  ok('2.10 dia de 375s pintou amarelo',  /var\(--degraded\)/.test(comps));
+  // As barras usam tokens PROPRIOS (--dia-fora / --dia-parcial), separados
+  // dos de status. O --degraded escuro existe para a pilula, onde ha texto
+  // branco por cima; numa barra de 8px sem texto, o ambar claro cumpre
+  // melhor o papel de "houve algo, mas pouco".
+  ok('2.9 dia de 8400s pintou vermelho', /var\(--dia-fora\)/.test(comps));
+  ok('2.10 dia de 375s pintou ambar claro', /var\(--dia-parcial\)/.test(comps));
   ok('2.11 dia sem queda fica VERDE, nao transparente',
      (comps.match(/fill="var\(--ok\)"/g) || []).length > 150,
      (comps.match(/fill="var\(--ok\)"/g) || []).length);
-  ok('2.12 dia so com deploy/manutencao continua verde, explicado no tooltip',
-     /fora do SLA \(deploy ou manuten\u00e7\u00e3o\)/.test(comps));
+  ok('2.12 dia so com deploy/manutencao continua verde', /fora do SLA/.test(comps));
   ok('2.12b ... e mais claro, para quem reparar', /opacity="0\.45"/.test(comps));
+
+  // ---- o tooltip diz DE QUE HORA A QUE HORA ----
+  // "1h17 fora" sozinho nao deixa investigar nada; com o horario da-se
+  // para cruzar com deploy, pico de acesso ou janela de reducao.
+  const nl = String.fromCharCode(10);
+  ok('2.12c tooltip tem faixa de horario', /\d{2}:\d{2} \u2192 \d{2}:\d{2}/.test(comps),
+     (comps.match(/\d{2}:\d{2} \u2192 \d{2}:\d{2}/) || ['(nenhuma)'])[0]);
+  ok('2.12d ... em linha separada do resumo do dia', comps.includes(nl + '   '));
+  ok('2.12e ... com o impacto por extenso', /\u2192 \d{2}:\d{2}  (Fora do ar|Falha parcial|Degradado)/.test(comps));
+  ok('2.12f faixa que nao conta vem marcada',
+     /n\u00e3o conta: deploy ou manuten\u00e7\u00e3o/.test(comps));
 
   console.log('\n--- incidentes ---');
   const arts = (incs.match(/<article class="inc">/g) || []).length;

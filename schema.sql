@@ -304,6 +304,96 @@ create trigger incidents_status
   for each row execute function incidents_refresh_status();
 
 -- ---------------------------------------------------------------------
+-- Horarios de maquina reduzida
+--
+-- Mora aqui, e nao num arquivo a parte, porque downtime_seconds() depende
+-- dela. Tentei separar antes: janelas.sql redefinia downtime_seconds e
+-- public_daily_downtime por cima. Bastava rodar schema.sql ou api.sql de
+-- novo -- coisa normal ao aplicar qualquer mudanca -- para o desconto
+-- sumir e o uptime subir sozinho, sem erro nenhum na tela. Definicao
+-- duplicada de funcao e uma armadilha de tempo: funciona no dia em que
+-- voce escreve e falha meses depois, na ordem errada.
+--
+-- Degradacao com a maquina propositalmente reduzida e esperada, igual a
+-- degradacao durante deploy. Mesma decisao, mesmo tratamento: continua no
+-- historico, nao queima SLA.
+-- ---------------------------------------------------------------------
+create table if not exists janelas_reducao (
+  id           bigint generated always as identity primary key,
+
+  -- NULL = vale para todos. E o caso comum: a reducao costuma ser do
+  -- cluster inteiro, nao de um servico.
+  component_id bigint      references components(id) on delete cascade,
+
+  -- NULL = todos os dias. 0=domingo .. 6=sabado (igual ao extract(dow)).
+  dia_semana   int,
+
+  hora_inicio  time        not null,
+  hora_fim     time        not null,
+
+  motivo       text        not null,
+  ativa        boolean     not null default true,
+  created_at   timestamptz not null default now(),
+
+  constraint janelas_dow check (dia_semana is null or dia_semana between 0 and 6)
+);
+
+comment on table janelas_reducao is
+  'Horarios de maquina reduzida. hora_fim <= hora_inicio: a janela atravessa a meia-noite.';
+
+create index if not exists janelas_reducao_comp_idx
+  on janelas_reducao (component_id) where ativa;
+
+-- ---------------------------------------------------------------------
+-- janelas_do_periodo -- a regra vira intervalos concretos
+--
+-- A janela e uma REGRA ("todo dia 22h-6h"); o calculo precisa de
+-- INTERVALOS ("26/08 22:00 ate 27/08 06:00").
+--
+-- Atravessar a meia-noite e o caso normal, nao a excecao: reduzir maquina
+-- de madrugada e justamente das 19h as 6h30. Quando hora_fim <=
+-- hora_inicio, o fim cai no dia seguinte.
+--
+-- O dia da semana e conferido no INICIO: uma janela de segunda que vai
+-- ate terca de manha pertence a segunda.
+-- ---------------------------------------------------------------------
+create or replace function janelas_do_periodo(
+  p_component bigint,
+  p_de        timestamptz,
+  p_ate       timestamptz,
+  p_tz        text default 'America/Sao_Paulo'
+) returns tstzmultirange
+language sql stable as $fn$
+  with dias as (
+    -- um dia a mais de cada lado: a janela da vespera pode invadir p_de,
+    -- e a de hoje pode terminar depois de p_ate
+    select g::date as dia
+      from generate_series(
+             ((p_de  at time zone p_tz)::date - 1),
+             ((p_ate at time zone p_tz)::date + 1),
+             interval '1 day') g
+  ),
+  ocorrencias as (
+    select tstzrange(
+             (d.dia + j.hora_inicio)::timestamp at time zone p_tz,
+             (d.dia
+                + case when j.hora_fim <= j.hora_inicio then 1 else 0 end
+                + j.hora_fim)::timestamp at time zone p_tz,
+             '[)') as faixa
+      from dias d
+      join janelas_reducao j
+        on j.ativa
+       and (j.component_id is null or j.component_id = p_component)
+       and (j.dia_semana   is null or j.dia_semana   = extract(dow from d.dia)::int)
+  )
+  select coalesce(
+           range_agg(o.faixa * tstzrange(p_de, p_ate, '[)')),
+           '{}'::tstzmultirange)
+    from ocorrencias o
+   where o.faixa && tstzrange(p_de, p_ate, '[)');
+$fn$;
+
+-- ---------------------------------------------------------------------
 -- downtime_seconds -- segundos ponderados de indisponibilidade
 --
 -- Nao e uma soma simples de duracoes. Dois motivos:
@@ -333,7 +423,13 @@ create or replace function downtime_seconds(
   p_to        timestamptz
 ) returns numeric
 language sql stable as $fn$
-  with base as (
+  with janelas as (
+    -- o tempo em que a maquina estava reduzida sai da conta, recortado na
+    -- borda: queda das 21h30 as 23h com janela a partir das 22h queima 30
+    -- minutos, nao zero -- meia hora aconteceu com a maquina cheia
+    select janelas_do_periodo(p_component, p_from, p_to) as mr
+  ),
+  base as (
     select i.impact,
            impact_weight(i.impact) as w,
            greatest(i.started_at, p_from)                        as ini,
@@ -362,7 +458,7 @@ language sql stable as $fn$
   select coalesce(sum(
            (c.w - c.w_anterior) * (
              select coalesce(sum(extract(epoch from (upper(f) - lower(f)))), 0)
-               from unnest(c.faixas) as f
+               from unnest(c.faixas - (select mr from janelas)) as f
            )
          ), 0)::numeric
     from camadas c;

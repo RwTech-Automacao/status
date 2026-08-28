@@ -131,6 +131,12 @@ language sql stable as $fn$
              ((g::date) + 1)::timestamp at time zone p_tz, '[)')) as faixa
       from j, generate_series(j.d_ini, j.d_fim - 1, interval '1 day') g
   ),
+  -- o mesmo desconto de downtime_seconds, aqui por componente
+  reducao as (
+    select pc.id as component_id,
+           janelas_do_periodo(pc.id, ja.ini, ja.fim, p_tz) as mr
+      from public_components pc cross join janela ja
+  ),
   -- intervalos recortados na janela, separados por "conta ou nao conta"
   base as (
     select i.component_id,
@@ -159,18 +165,28 @@ language sql stable as $fn$
       from (select distinct component_id, excl, w from base) n
   )
   select pc.id, d.dia,
+         -- conta para o SLA: o que sobra depois de tirar a janela
          coalesce((select sum((c.w - c.w_ant) * (
                     select coalesce(sum(extract(epoch from (upper(x) - lower(x)))), 0)
-                      from unnest(c.mr * d.faixa) x))
+                      from unnest((c.mr * d.faixa) - r.mr) x))
                      from camadas c
                     where c.component_id = pc.id and not c.excl), 0)::numeric,
+         -- nao conta: deploy + o pedaco que caiu dentro da janela.
+         -- Continua visivel no tooltip -- esconder seria a diferenca
+         -- entre nao contar e fingir que nao houve.
          coalesce((select sum((c.w - c.w_ant) * (
                     select coalesce(sum(extract(epoch from (upper(x) - lower(x)))), 0)
                       from unnest(c.mr * d.faixa) x))
                      from camadas c
                     where c.component_id = pc.id and c.excl), 0)::numeric
+       + coalesce((select sum((c.w - c.w_ant) * (
+                    select coalesce(sum(extract(epoch from (upper(x) - lower(x)))), 0)
+                      from unnest((c.mr * d.faixa) * r.mr) x))
+                     from camadas c
+                    where c.component_id = pc.id and not c.excl), 0)::numeric
     from public_components pc
    cross join dias d
+   join reducao r on r.component_id = pc.id
    order by pc.id, d.dia;
 $fn$;
 
@@ -191,21 +207,67 @@ language sql stable as $fn$
   d as (
     select * from public_daily_downtime(p_days, p_tz)
   ),
+  -- Cada incidente expandido nos dias que ele atravessa, recortado nas
+  -- bordas. E o que permite ao tooltip dizer "das 14:20 as 15:37" em vez
+  -- de so "1h17 fora" -- e numa queda que passa da meia-noite cada dia
+  -- mostra a SUA fatia, nao o intervalo inteiro repetido nos dois.
+  --
+  -- Expandido de uma vez, e nao por subconsulta em cada celula: 17
+  -- servicos x 90 dias seriam 1530 consultas para preencher meia duzia
+  -- de tooltips.
+  faixas as (
+    select i.component_id,
+           g::date as dia,
+           to_char(greatest(i.started_at, (g::date)::timestamp at time zone p_tz)
+                     at time zone p_tz, 'HH24:MI')                    as de,
+           to_char(least(coalesce(i.resolved_at, now()),
+                         ((g::date) + 1)::timestamp at time zone p_tz)
+                     at time zone p_tz, 'HH24:MI')                    as ate,
+           i.impact,
+           i.excluded_from_sla,
+           i.started_at
+      from incidents i
+      join public_components pc on pc.id = i.component_id
+      cross join lateral generate_series(
+        greatest((i.started_at at time zone p_tz)::date,
+                 (now() at time zone p_tz)::date - (p_days - 1)),
+        least((coalesce(i.resolved_at, now()) at time zone p_tz)::date,
+              (now() at time zone p_tz)::date),
+        interval '1 day') g
+  ),
+  faixas_do_dia as (
+    select f.component_id, f.dia,
+           jsonb_agg(jsonb_build_object(
+             'de', f.de, 'ate', f.ate,
+             'impacto', f.impact,
+             'conta', not f.excluded_from_sla
+           ) order by f.started_at) as lista
+      from faixas f
+     group by f.component_id, f.dia
+  ),
   por_componente as (
     select pc.id, pc.slug, pc.name, pc.description, pc.status, pc.sla_target, pc.sort_order,
-           jsonb_agg(jsonb_build_object(
-             'dia',                d.dia,
-             'segundos',           round(d.segundos)::int,
-             'segundos_excluidos', round(d.segundos_excluidos)::int,
-             -- a cor sai do banco: a pagina nao decide o que e um dia ruim
-             'cor', case when d.segundos > lim.vermelho then 'vermelho'
-                         when d.segundos > 0            then 'amarelo'
-                         else                                'ok' end
-           ) order by d.dia)                                    as dias,
+           jsonb_agg(
+             jsonb_build_object(
+               'dia',                d.dia,
+               'segundos',           round(d.segundos)::int,
+               'segundos_excluidos', round(d.segundos_excluidos)::int,
+               -- a cor sai do banco: a pagina nao decide o que e um dia ruim
+               'cor', case when d.segundos > lim.vermelho then 'vermelho'
+                           when d.segundos > 0            then 'amarelo'
+                           else                                'ok' end
+             )
+             -- so nos dias que tiveram alguma coisa; nos outros a chave nem
+             -- existe, e sao a esmagadora maioria
+             || case when fd.lista is null then '{}'::jsonb
+                     else jsonb_build_object('faixas', fd.lista) end
+             order by d.dia)                                    as dias,
            sum(d.segundos)                                      as total_segundos,
            count(*)                                             as total_dias
       from public_components pc
       join d on d.component_id = pc.id
+      left join faixas_do_dia fd
+             on fd.component_id = pc.id and fd.dia = d.dia
      cross join lim
      group by pc.id, pc.slug, pc.name, pc.description, pc.status, pc.sla_target, pc.sort_order
   )

@@ -41,7 +41,7 @@ const ESTADO_UPD = {investigating:'Investigando', identified:'Identificado',
                     monitoring:'Monitorando', resolved:'Resolvido'};
 
 // A cor vem do banco; aqui só a tradução para a paleta.
-const COR = {vermelho:'var(--outage)', amarelo:'var(--degraded)', ok:'var(--ok)'};
+const COR = {vermelho:'var(--dia-fora)', amarelo:'var(--dia-parcial)', ok:'var(--ok)'};
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[<>&"]/g,
@@ -66,11 +66,26 @@ function barras(dias){
 
     const cor = COR[d.cor] || 'var(--ok)';
 
-    const t = d.segundos
+    // O tooltip abre em linhas: o resumo do dia e, abaixo, cada janela de
+    // queda com hora de início e fim. Saber QUE HORAS foi é o que permite
+    // cruzar com deploy, pico de acesso ou janela de redução -- "1h17
+    // fora" sozinho não deixa investigar nada.
+    let t = d.segundos
       ? dia(d.dia) + ' — ' + dur(d.segundos) + ' fora'
       : soExcluido
-        ? dia(d.dia) + ' — ' + dur(d.segundos_excluidos) + ' fora do SLA (deploy ou manutenção)'
+        ? dia(d.dia) + ' — ' + dur(d.segundos_excluidos) + ' fora do SLA'
         : dia(d.dia) + ' — sem quedas';
+
+    // Quebra de linha via String.fromCharCode(10): o <title> do SVG aceita
+    // multilinha, mas um "\n" escrito à mão dentro desta string já foi
+    // convertido em quebra real por uma edição automatizada e partiu o
+    // literal. Assim não há escape para alguém estragar.
+    const NL = String.fromCharCode(10);
+    for (const f of (d.faixas || [])) {
+      t += NL + '   ' + f.de + ' → ' + f.ate + '  ' +
+           (LABEL[f.impacto] || f.impacto) +
+           (f.conta ? '' : '  (não conta: deploy ou manutenção)');
+    }
 
     return '<g><title>' + esc(t) + '</title>' +
       '<rect x="' + (i*10) + '" y="6" width="8" height="32" rx="2" fill="' + cor + '"' +
