@@ -109,14 +109,18 @@ const tick = () => new Promise(r => setImmediate(r));
 
   // Tempo de queda: RELOGIO no estado ruim, nao ponderado. Esta e a tela de
   // operacao -- o que importa e quanto tempo doeu, nao quanto pesa no SLA.
-  ok('2.16b tem os tres grupos',
-     /colspan="2" class="g">Picos</.test(r) &&
-     /colspan="2" class="g">Warnings</.test(r) &&
-     /colspan="2" class="g">Quedas</.test(r));
-  ok('2.16b1 cada grupo tem qtd e tempo',
-     (r.match(/>qtd</g) || []).length === 2 && (r.match(/>tempo</g) || []).length === 2);
-  ok('2.16b2 coluna "Picos" solta saiu (era a soma das duas ao lado)',
-     !/>Picos<\/th>\s*<th class="n">/.test(r) &&
+  // Cabecalho de UMA linha. O defeito relatado nao era o formato -- era o
+  // espacamento -- entao a checagem aqui e de ALINHAMENTO: mesmo numero de
+  // <th> e de <td>, na mesma ordem.
+  const cabec = [...r.matchAll(/<th[^>]*>([^<]*)<\/th>/g)].map(m => m[1]);
+  ok('2.16b cabecalho de uma linha so',
+     (r.match(/<tr>/g) || []).length === payload.componentes.length + 1,
+     (r.match(/<tr>/g) || []).length);
+  ok('2.16b1 nove colunas, na ordem esperada',
+     cabec.join('|') === 'Serviço|Picos|Fora de deploy|Em deploy|Warnings|' +
+                         'Tempo em warning|Quedas|Tempo fora|Último',
+     cabec.join(' | '));
+  ok('2.16b2 picos continua sendo a soma de fora + em deploy',
      payload.componentes.every(c => c.picos === c.fora_de_deploy + c.em_deploy));
 
   // Cada linha do corpo precisa ter exatamente as 8 celulas do cabecalho,
@@ -124,8 +128,9 @@ const tick = () => new Promise(r => setImmediate(r));
   // exatamente o defeito relatado.
   const celulas = [...corpo.matchAll(/<tr>([\s\S]*?)<\/tr>/g)]
     .map(m => (m[1].match(/<td/g) || []).length);
-  ok('2.16b3 toda linha tem 8 celulas, alinhadas com o cabecalho',
-     celulas.every(n => n === 8), [...new Set(celulas)].join(','));
+  ok('2.16b3 toda linha tem tantas celulas quanto o cabecalho tem colunas',
+     celulas.every(n => n === cabec.length),
+     celulas[0] + ' celulas x ' + cabec.length + ' colunas');
 
   // `warnings` conta TUDO na faixa; `picos` exclui os que aconteceram
   // dentro de uma queda aberta. A diferenca conta outra historia: um

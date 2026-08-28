@@ -100,29 +100,31 @@ function ranking(comps){
   }
   const teto = Math.max(1, ...comps.map(c => c.fora_de_deploy));
 
-  // Cabeçalho em dois níveis porque o dado é agrupado, não uma lista de
-  // oito números soltos: PICOS tem duas leituras (fora/dentro de deploy),
-  // e WARNING e QUEDA têm cada um a contagem e o tempo. Em uma linha só,
-  // "TEMPO FORA" e "ÚLTIMO" acabavam encostados e o título parava de
-  // apontar para a coluna certa.
+  // Cabeçalho de uma linha só. O que estava errado antes não era o
+  // formato: era o espaçamento. Todas as colunas numéricas tinham
+  // padding-right:0 e nenhuma à esquerda, então encostavam umas nas
+  // outras e o título deixava de apontar para o número embaixo.
   //
-  // A coluna "Picos" solta saiu: era a soma das duas ao lado
-  // (picos = fora_de_deploy + em_deploy) e só ocupava largura.
+  // A ordem segue a leitura: o que aconteceu (picos, com a quebra por
+  // deploy), depois warning (quantas e por quanto tempo), depois queda
+  // (idem) e por fim quando foi a última vez.
+  const COLS = [
+    ['Serviço',          'svc'],
+    ['Picos',            'n'],
+    ['Fora de deploy',   'n'],
+    ['Em deploy',        'n'],
+    ['Warnings',         'n'],
+    ['Tempo em warning', 'n'],
+    ['Quedas',           'n'],
+    ['Tempo fora',       'n'],
+    ['Último',           'n'],
+  ];
+
   $('ranking').innerHTML =
-    '<table class="rank"><thead>' +
-      '<tr>' +
-        '<th rowspan="2">Serviço</th>' +
-        '<th colspan="2" class="g">Picos</th>' +
-        '<th colspan="2" class="g">Warnings</th>' +
-        '<th colspan="2" class="g">Quedas</th>' +
-        '<th rowspan="2" class="n g">Último</th>' +
-      '</tr>' +
-      '<tr class="sub">' +
-        '<th class="n g">fora deploy</th><th class="n">em deploy</th>' +
-        '<th class="n g">qtd</th><th class="n">tempo</th>' +
-        '<th class="n g">qtd</th><th class="n">tempo</th>' +
-      '</tr>' +
-    '</thead><tbody>' +
+    '<table class="rank"><thead><tr>' +
+      COLS.map(([rotulo, cls]) =>
+        '<th' + (cls === 'n' ? ' class="n"' : '') + '>' + rotulo + '</th>').join('') +
+    '</tr></thead><tbody>' +
     comps.map(c =>
       '<tr>' +
         '<td><span class="svc">' + esc(c.nome) + '</span>' +
@@ -131,25 +133,26 @@ function ranking(comps){
           '<div class="barra" style="width:' +
             Math.round((c.fora_de_deploy / teto) * 100) + '%;margin-top:6px"></div></td>' +
 
-        '<td class="n num g"><b>' + c.fora_de_deploy + '</b></td>' +
+        '<td class="n num">' + c.picos + '</td>' +
+        '<td class="n num"><b>' + c.fora_de_deploy + '</b></td>' +
         '<td class="n num mut">' + c.em_deploy + '</td>' +
 
         // `warnings` conta TUDO na faixa; `picos` exclui os que aconteceram
         // dentro de uma queda já aberta. A diferença é a história: 1 pico e
         // 20 warnings não é "piscou", é "caiu e ficou oscilando".
-        '<td class="n num g' + (c.warnings ? '' : ' mut') + '">' +
+        '<td class="n num' + (c.warnings ? '' : ' mut') + '">' +
           (c.warnings ?? c.picos) + '</td>' +
         '<td class="n num' + (c.min_em_warning ? '' : ' mut') + '">' +
           minutos(c.min_em_warning) + '</td>' +
 
-        '<td class="n num g' + (c.quedas ? '' : ' mut') + '">' + c.quedas + '</td>' +
+        '<td class="n num' + (c.quedas ? '' : ' mut') + '">' + c.quedas + '</td>' +
         // tempo de RELÓGIO no estado ruim, não ponderado: esta é a tela de
         // operação, onde o que importa é quanto tempo doeu -- não quanto
         // isso pesa no SLA
         '<td class="n num' + (c.min_em_queda ? '' : ' mut') + '">' +
           (c.min_em_queda ? minutos(c.min_em_queda) : '—') + '</td>' +
 
-        '<td class="n num mut g">' + hora(c.ultimo) + '</td>' +
+        '<td class="n num mut">' + hora(c.ultimo) + '</td>' +
       '</tr>').join('') +
     '</tbody></table>';
 }
