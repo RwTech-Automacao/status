@@ -268,6 +268,42 @@ begin
 end $fn$;
 
 -- ---------------------------------------------------------------------
+-- Gatilho: components.status acompanha incidents SEMPRE
+--
+-- refresh_component_status() era chamada so pela ingest_health(). Bastava
+-- alguem mexer em incidents por SQL -- apagar um teste, fechar na mao,
+-- corrigir um impacto -- para a coluna congelar no valor antigo. E o
+-- sintoma e cruel: a pagina mostra "tudo operacional" pintado de vermelho,
+-- porque o texto vem da contagem de incidentes abertos e a cor vem da
+-- coluna. Duas fontes para a mesma verdade.
+--
+-- Aconteceu de verdade: um incidente de teste apagado com DELETE deixou o
+-- componente preso em major_outage sem nenhuma queda aberta.
+--
+-- Por linha e nao por instrucao: a escala aqui e de centenas de linhas, e
+-- a versao por instrucao exigiria tres gatilhos com tabelas de transicao
+-- diferentes para ganhar nada.
+-- ---------------------------------------------------------------------
+create or replace function incidents_refresh_status()
+returns trigger
+language plpgsql as $fn$
+begin
+  perform refresh_component_status(coalesce(new.component_id, old.component_id));
+
+  -- UPDATE que move o incidente de componente precisa acertar os dois
+  if tg_op = 'UPDATE' and new.component_id is distinct from old.component_id then
+    perform refresh_component_status(old.component_id);
+  end if;
+
+  return null;
+end $fn$;
+
+drop trigger if exists incidents_status on incidents;
+create trigger incidents_status
+  after insert or update or delete on incidents
+  for each row execute function incidents_refresh_status();
+
+-- ---------------------------------------------------------------------
 -- downtime_seconds -- segundos ponderados de indisponibilidade
 --
 -- Nao e uma soma simples de duracoes. Dois motivos:

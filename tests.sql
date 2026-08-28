@@ -715,6 +715,78 @@ begin
   perform assert_eq('21.5 mas a trilha guarda os 14 saltos', n, 14);
 end $$;
 
+-- =====================================================================
+-- 22. components.status acompanha incidents mexido POR SQL
+--
+-- Achado em producao: um incidente de teste apagado com DELETE deixou o
+-- componente preso em major_outage sem nenhuma queda aberta -- e a pagina
+-- mostrou "tudo operacional" pintado de vermelho.
+-- =====================================================================
+do $$
+declare cid bigint; iid bigint;
+begin
+  insert into components (slug,name,environment,created_at)
+  values ('teste-gatilho','Gatilho','producao', now()-interval '10 days')
+  returning id into cid;
+
+  perform assert_eq('22.1 nasce operacional',
+    (select status::text from components where id=cid), 'operational');
+
+  -- INSERT direto, sem passar por ingest_health
+  insert into incidents (component_id,fingerprint,impact,title,started_at,last_seen_at)
+  values (cid,'fp-g','major_outage','fora', now()-interval '5 minutes', now())
+  returning id into iid;
+  perform assert_eq('22.2 INSERT por SQL ja reflete',
+    (select status::text from components where id=cid), 'major_outage');
+
+  -- UPDATE do impacto
+  update incidents set impact='degraded' where id=iid;
+  perform assert_eq('22.3 UPDATE de impacto reflete',
+    (select status::text from components where id=cid), 'degraded');
+
+  -- fechar na mao
+  update incidents set resolved_at=now() where id=iid;
+  perform assert_eq('22.4 fechar por SQL normaliza',
+    (select status::text from components where id=cid), 'operational');
+
+  -- reabrir volta a pintar -- com o impacto ATUAL (degraded, do 22.3),
+  -- nao com o que o incidente tinha quando nasceu
+  update incidents set resolved_at=null where id=iid;
+  perform assert_eq('22.5 reabrir volta a pintar, no impacto atual',
+    (select status::text from components where id=cid), 'degraded');
+end $$;
+
+do $$
+declare cid bigint;
+begin
+  select id into cid from components where slug='teste-gatilho';
+  update incidents set impact='major_outage' where component_id=cid;
+
+  delete from incidents where component_id=cid;
+  perform assert_eq('22.6 DELETE normaliza o componente',
+    (select status::text from components where id=cid), 'operational');
+end $$;
+
+-- dois abertos: apagar UM nao pode normalizar o componente
+do $$
+declare cid bigint; a bigint; b bigint;
+begin
+  select id into cid from components where slug='teste-gatilho';
+  insert into incidents (component_id,fingerprint,impact,title,started_at,last_seen_at)
+  values (cid,'fp-h','major_outage','fora',now()-interval '9 minutes',now()) returning id into a;
+  insert into incidents (component_id,fingerprint,impact,title,started_at,last_seen_at)
+  values (cid,'fp-i','degraded','lento',now()-interval '8 minutes',now()) returning id into b;
+  perform assert_eq('22.7 o pior vence', (select status::text from components where id=cid), 'major_outage');
+
+  delete from incidents where id=a;
+  perform assert_eq('22.8 apagou o pior, sobra o outro',
+    (select status::text from components where id=cid), 'degraded');
+
+  delete from incidents where id=b;
+  perform assert_eq('22.9 apagou o ultimo, normaliza',
+    (select status::text from components where id=cid), 'operational');
+end $$;
+
 select '=========  TODOS OS TESTES PASSARAM  =========' as resultado;
 
 
