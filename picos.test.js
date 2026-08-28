@@ -14,7 +14,7 @@ const ok = (caso, cond, extra) => {
 
 const IDS = ['grafico','balde','ranking','eventos','ev-conta','erro','conteudo',
              'p-rotulo','p-picos','p-fora','p-afetados','p-quedas',
-             'eixo-de','eixo-ate','de','ate','filtros','aplicar'];
+             'eixo-de','eixo-ate','de','ate','filtros','aplicar','frescor'];
 
 function rodar(resposta, opts = {}) {
   const el = {}, chips = [];
@@ -23,7 +23,10 @@ function rodar(resposta, opts = {}) {
                  setAttribute(k, v) { this._attrs[k] = v; } });
   }
   const novo = id => ({ id, innerHTML: '', textContent: '', value: '',
-                        classList: { add(){}, remove(){} },
+                        className: '',
+                        classList: { _escureceu: false,
+                                     add(c){ if (c === 'carregando') this._escureceu = true; },
+                                     remove(){} },
                         addEventListener(){}, hidden: false });
   for (const id of IDS) el[id] = novo(id);
 
@@ -41,10 +44,17 @@ function rodar(resposta, opts = {}) {
     return { ok: true, status: 200, json: async () => resposta };
   };
 
-  new Function('document','fetch','location','history','addEventListener','URLSearchParams',
-    script)(doc, fetchStub, loc, { pushState(){} }, () => {}, URLSearchParams);
+  // setInterval e injetado, nao herdado do Node: alem de deixar os
+  // intervalos observaveis, evita que a suite deixe temporizadores vivos
+  // e o processo pendurado.
+  const timers = [];
+  const intervalStub = (fn, ms) => { timers.push(ms); return timers.length; };
 
-  return { el, chips, pedidos, loc };
+  new Function('document','fetch','location','history','addEventListener',
+               'URLSearchParams','setInterval', script)(
+    doc, fetchStub, loc, { pushState(){} }, () => {}, URLSearchParams, intervalStub);
+
+  return { el, chips, pedidos, loc, timers };
 }
 
 try { new Function('document','fetch','location','history','addEventListener','URLSearchParams', script);
@@ -54,7 +64,7 @@ catch (e) { ok('1. picos.js compila', false, e.message); process.exit(1); }
 const tick = () => new Promise(r => setImmediate(r));
 
 (async () => {
-  const { el, chips, pedidos } = rodar(payload);
+  const { el, chips, pedidos, timers } = rodar(payload);
   await tick(); await tick();
 
   console.log('\n--- pedido ---');
@@ -93,6 +103,18 @@ const tick = () => new Promise(r => setImmediate(r));
      primeiro.nome + ' com ' + primeiro.fora_de_deploy);
   ok('2.15 mostra tempo em warning, nao so contagem', /min<\/td>|h<\/td>/.test(r));
   ok('2.16 marca o ambiente', /class="amb prod"/.test(r));
+
+  // Tempo de queda: RELOGIO no estado ruim, nao ponderado. Esta e a tela de
+  // operacao -- o que importa e quanto tempo doeu, nao quanto pesa no SLA.
+  ok('2.16b tem coluna de tempo fora', /Tempo fora/.test(r));
+  const comQueda = payload.componentes.filter(c => c.min_em_queda > 0).length;
+  ok('2.16c ... preenchida em quem caiu', comQueda === 0 || /min<\/td>|h<\/td>/.test(r), comQueda);
+
+  console.log('\n--- TV: atualiza sozinho ---');
+  ok('2.16d recarrega em segundo plano', timers.includes(60000), timers.join(','));
+  ok('2.16e ... e checa o frescor mais amiude', timers.includes(10000));
+  ok('2.16f marca de frescor com o horario',
+     /^atualizado \d{2}:\d{2}$/.test(el.frescor.textContent), el.frescor.textContent);
 
   console.log('\n--- eventos ---');
   const e = el.eventos.innerHTML;

@@ -49,6 +49,12 @@ body{
 .nav a:hover{color:var(--primary)}
 .nav a[aria-current]{color:var(--primary)}
 
+/* Numa TV, painel congelado que parece vivo é pior que painel apagado:
+   ninguém desconfia do número errado. Passados 5 minutos sem uma leitura
+   boa, o horário fica âmbar. */
+.frescor{color:var(--ink-soft);font-weight:400}
+.frescor.velho{color:var(--degraded);font-weight:600}
+
 /* ---------- filtros ---------- */
 .filtros{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .chip{
@@ -157,6 +163,7 @@ footer a:hover{text-decoration:underline}
         <h1 class="verdict">Onde a máquina <mark>está sofrendo</mark></h1>
       </div>
       <nav class="nav">
+        <span class="frescor" id="frescor">carregando…</span>
         <a href="/">Status público</a>
         <a href="/picos" aria-current="page">Picos</a>
       </nav>

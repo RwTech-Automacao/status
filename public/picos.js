@@ -8,6 +8,18 @@
 const API = '/api/picos';
 const PADRAO = '3h';
 
+// A tela fica numa TV. Os dados se renovam sozinhos; a PAGINA nunca
+// recarrega -- um F5 periodico perderia o filtro, piscaria e, se a rede
+// falhasse no instante errado, deixaria a TV numa tela de erro em branco.
+// Aqui, se um refresh falhar, o conteudo anterior continua no ar e o
+// relogio do cabecalho denuncia que envelheceu.
+const RECARGA_MS = 60000;
+
+// Acima disso, o que esta na tela nao merece mais confianca.
+const VELHO_MS = 5 * 60000;
+
+let ultimoOk = null;
+
 const $  = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[<>&"]/g,
   c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
@@ -92,7 +104,7 @@ function ranking(comps){
     '<table><thead><tr>' +
       '<th>Serviço</th><th class="n">Picos</th><th class="n">Fora de deploy</th>' +
       '<th class="n">Em deploy</th><th class="n">Tempo em warning</th>' +
-      '<th class="n">Quedas</th><th class="n">Último</th>' +
+      '<th class="n">Quedas</th><th class="n">Tempo fora</th><th class="n">Último</th>' +
     '</tr></thead><tbody>' +
     comps.map(c =>
       '<tr>' +
@@ -106,6 +118,11 @@ function ranking(comps){
         '<td class="n num mut">' + c.em_deploy + '</td>' +
         '<td class="n num">' + minutos(c.min_em_warning) + '</td>' +
         '<td class="n num' + (c.quedas ? '' : ' mut') + '">' + c.quedas + '</td>' +
+        // tempo de RELOGIO no estado ruim, nao ponderado: esta e a tela de
+        // operacao, onde o que importa e quanto tempo doeu -- nao quanto
+        // isso pesa no SLA
+        '<td class="n num' + (c.min_em_queda ? '' : ' mut') + '">' +
+          (c.min_em_queda ? minutos(c.min_em_queda) : '—') + '</td>' +
         '<td class="n num mut">' + hora(c.ultimo) + '</td>' +
       '</tr>').join('') +
     '</tbody></table>';
@@ -169,9 +186,11 @@ function render(d){
 }
 
 // ---------------------------------------------------------------------
-async function carregar(){
+async function carregar(silencioso){
   const conteudo = $('conteudo');
-  conteudo.classList.add('carregando');
+  // Só escurece quando a pessoa pediu (filtro novo). No refresh de fundo
+  // isso viraria uma piscada a cada minuto na TV.
+  if (!silencioso) conteudo.classList.add('carregando');
   try{
     const r = await fetch(API + '?' + new URLSearchParams(filtroAtual()));
 
@@ -182,6 +201,8 @@ async function carregar(){
     if (!r.ok) throw new Error('HTTP ' + r.status);
 
     render(await r.json());
+    ultimoOk = new Date();
+    marcarFrescor();          // na hora, não no próximo tique de 10s
     $('erro').hidden = true;
   }catch(e){
     $('erro').hidden = false;
@@ -207,4 +228,20 @@ $('aplicar').addEventListener('click', () => {
 // botão voltar do navegador
 addEventListener('popstate', () => carregar());
 
+// Marca de frescor: numa TV, painel congelado que parece vivo e pior que
+// painel apagado -- ninguem desconfia do numero errado.
+function marcarFrescor(){
+  const el = $('frescor');
+  if (!el) return;
+  if (!ultimoOk) { el.textContent = 'carregando…'; el.className = 'frescor'; return; }
+  const idade = Date.now() - ultimoOk;
+  const hh = String(ultimoOk.getHours()).padStart(2,'0');
+  const mm = String(ultimoOk.getMinutes()).padStart(2,'0');
+  el.textContent = 'atualizado ' + hh + ':' + mm;
+  el.className = 'frescor' + (idade > VELHO_MS ? ' velho' : '');
+}
+
 carregar();
+setInterval(() => carregar(true), RECARGA_MS);
+setInterval(marcarFrescor, 10000);
+marcarFrescor();
