@@ -41,38 +41,41 @@ const ESTADO_UPD = {investigating:'Investigando', identified:'Identificado',
                     monitoring:'Monitorando', resolved:'Resolvido'};
 
 // A cor vem do banco; aqui só a tradução para a paleta.
-const COR = {vermelho:'var(--outage)', amarelo:'var(--degraded)', ok:'transparent'};
+const COR = {vermelho:'var(--outage)', amarelo:'var(--degraded)', ok:'var(--ok)'};
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[<>&"]/g,
   c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
 
 // ---------------------------------------------------------------------
-// O gráfico assinatura: uma linha de base contínua onde a queda afunda
-// proporcionalmente à duração, em escala de raiz — assim 1 minuto
-// continua visível ao lado de 3 horas.
+// Uma barra por dia, altura fixa, cor pelo estado — o modelo do Statuspage
+// que a Supabase usa. Verde é o normal; a exceção é que salta aos olhos.
+//
+// Tinha antes uma linha de base contínua onde a queda "afundava"
+// proporcionalmente à duração. Era bonito e dizia mais, mas quem lê uma
+// página de status quer a resposta em um relance, e noventa alturas
+// diferentes pedem interpretação. A duração não se perdeu: está no
+// tooltip de cada dia, que é onde alguém procura o detalhe.
 // ---------------------------------------------------------------------
 function barras(dias){
   return dias.map((d,i) => {
-    const h = d.segundos ? Math.max(3, 32*Math.pow(Math.min(d.segundos,86400)/86400,.25)) : 0;
+    // Dia em que só houve deploy ou janela de manutenção: continua verde,
+    // porque não queimou SLA. Fica um tom mais claro para quem reparar,
+    // e o tooltip conta o que houve.
+    const soExcluido = !d.segundos && d.segundos_excluidos > 0;
 
-    // Dia em que só houve deploy: não pinta (não queimou SLA), mas
-    // apaga um pouco a linha de base. Fica descobrível pelo tooltip
-    // sem sujar a leitura de quem só bate o olho.
-    const soDeploy = !d.segundos && d.segundos_excluidos > 0;
+    const cor = COR[d.cor] || 'var(--ok)';
 
     const t = d.segundos
       ? dia(d.dia) + ' — ' + dur(d.segundos) + ' fora'
-      : soDeploy
-        ? dia(d.dia) + ' — ' + dur(d.segundos_excluidos) + ' em deploy (não conta para o SLA)'
+      : soExcluido
+        ? dia(d.dia) + ' — ' + dur(d.segundos_excluidos) + ' fora do SLA (deploy ou manutenção)'
         : dia(d.dia) + ' — sem quedas';
 
     return '<g><title>' + esc(t) + '</title>' +
-      '<rect x="' + (i*10) + '" y="8" width="9" height="' + h + '" fill="' + (COR[d.cor] || 'transparent') + '"/>' +
-      '<rect x="' + (i*10) + '" y="4" width="9" height="4" fill="' +
-        (d.segundos ? 'var(--ink)' : 'var(--accent)') + '" opacity="' +
-        (d.segundos ? .55 : (soDeploy ? .3 : 1)) + '"/>' +
-      '<rect x="' + (i*10) + '" y="0" width="9" height="44" fill="transparent"/></g>';
+      '<rect x="' + (i*10) + '" y="6" width="8" height="32" rx="2" fill="' + cor + '"' +
+        (soExcluido ? ' opacity="0.45"' : '') + '/>' +
+      '<rect x="' + (i*10 - 1) + '" y="0" width="10" height="44" fill="transparent"/></g>';
   }).join('');
 }
 

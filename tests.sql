@@ -787,6 +787,95 @@ begin
     (select status::text from components where id=cid), 'operational');
 end $$;
 
+-- =====================================================================
+-- 23. Janelas de maquina reduzida
+--
+-- Mesma logica do deploy: nao queima SLA, mas continua visivel. A
+-- diferenca e que aqui o recorte e por TEMPO, nao por incidente.
+-- =====================================================================
+do $$
+declare cid bigint;
+begin
+  insert into components (slug,name,environment,published,created_at)
+  values ('teste-janela','Janela','producao',true,'2026-01-01') returning id into cid;
+
+  -- madrugada reduzida, todo dia, para todos os componentes
+  perform cadastrar_janela('22:00','06:00','maquina reduzida de madrugada');
+
+  perform assert_eq('23.1 janela atravessa a meia-noite',
+    (select atravessa_meia_noite from janelas_ativas limit 1), true);
+
+  -- queda INTEIRAMENTE dentro da janela: nao conta nada
+  insert into incidents (component_id,fingerprint,impact,title,started_at,resolved_at,last_seen_at)
+  values (cid,'j1','major_outage','fora',
+          '2026-08-10 23:00-03','2026-08-11 01:00-03','2026-08-11 01:00-03');
+  perform assert_eq('23.2 queda dentro da janela nao queima SLA',
+    downtime_seconds(cid,'2026-08-10 00:00-03','2026-08-12 00:00-03'), 0::numeric);
+
+  -- queda ATRAVESSANDO a borda: 21h30 as 23h, janela comeca 22h
+  -- so os 30 min com maquina cheia contam
+  insert into incidents (component_id,fingerprint,impact,title,started_at,resolved_at,last_seen_at)
+  values (cid,'j2','major_outage','fora',
+          '2026-08-15 21:30-03','2026-08-15 23:00-03','2026-08-15 23:00-03');
+  perform assert_eq('23.3 recorta na borda: so os 30 min de fora contam',
+    downtime_seconds(cid,'2026-08-15 00:00-03','2026-08-16 00:00-03'), 1800::numeric);
+
+  -- queda totalmente fora da janela: conta inteira
+  insert into incidents (component_id,fingerprint,impact,title,started_at,resolved_at,last_seen_at)
+  values (cid,'j3','major_outage','fora',
+          '2026-08-18 10:00-03','2026-08-18 11:00-03','2026-08-18 11:00-03');
+  perform assert_eq('23.4 fora da janela conta tudo',
+    downtime_seconds(cid,'2026-08-18 00:00-03','2026-08-19 00:00-03'), 3600::numeric);
+end $$;
+
+-- a janela por DIA DA SEMANA so vale naquele dia
+do $$
+declare cid bigint;
+begin
+  insert into components (slug,name,environment,published,created_at)
+  values ('teste-janela-dom','Janela Domingo','producao',true,'2026-01-01') returning id into cid;
+
+  update janelas_reducao set ativa = false;   -- desliga a de madrugada
+  perform cadastrar_janela('00:00','23:59','manutencao de domingo',
+                           p_slug => 'teste-janela-dom', p_dia_semana => 0);
+
+  -- 2026-08-16 e domingo; 2026-08-17 e segunda
+  insert into incidents (component_id,fingerprint,impact,title,started_at,resolved_at,last_seen_at)
+  values (cid,'d1','major_outage','fora',
+          '2026-08-16 10:00-03','2026-08-16 11:00-03','2026-08-16 11:00-03'),
+         (cid,'d2','major_outage','fora',
+          '2026-08-17 10:00-03','2026-08-17 11:00-03','2026-08-17 11:00-03');
+
+  perform assert_eq('23.5 domingo esta na janela',
+    downtime_seconds(cid,'2026-08-16 00:00-03','2026-08-17 00:00-03'), 0::numeric);
+  perform assert_eq('23.6 segunda nao esta',
+    downtime_seconds(cid,'2026-08-17 00:00-03','2026-08-18 00:00-03'), 3600::numeric);
+
+  -- a janela e SO desse componente
+  perform assert_eq('23.7 janela de um componente nao vaza para outro',
+    downtime_seconds((select id from components where slug='teste-janela'),
+                     '2026-08-16 00:00-03','2026-08-17 00:00-03'), 0::numeric);
+
+  update janelas_reducao set ativa = true where component_id is null;
+end $$;
+
+-- o tempo recortado NAO some: aparece como excluido, para o tooltip
+do $$
+declare cid bigint; r record;
+begin
+  select id into cid from components where slug='teste-janela';
+  update janelas_reducao set ativa = (component_id is null);
+
+  select * into r from public_daily_downtime(90) d
+   where d.component_id = cid and d.dia = '2026-08-10';
+  perform assert_eq('23.8 dia dentro da janela nao conta', r.segundos, 0::numeric);
+  perform assert_eq('23.9 mas o tempo continua visivel', (r.segundos_excluidos > 0), true);
+
+  update janelas_reducao set ativa = false;
+  perform assert_eq('23.10 desligar a janela devolve o downtime',
+    (downtime_seconds(cid,'2026-08-10 00:00-03','2026-08-12 00:00-03') > 0), true);
+end $$;
+
 select '=========  TODOS OS TESTES PASSARAM  =========' as resultado;
 
 

@@ -52,15 +52,19 @@ const tick = () => new Promise(r => setImmediate(r));
   ok('2.6 API Fechamento presente', /API Fechamento/.test(comps));
   ok('2.7 uptime em pt-BR', /99,89%/.test(comps),
      (comps.match(/\d+,\d+%/g) || []).slice(0, 2).join(' '));
-  const barras = (comps.match(/<rect x="\d+" y="8"/g) || []).length;
+  // uma barra por dia, altura fixa (modelo Statuspage/Supabase)
+  const barras = (comps.match(/<rect x="\d+" y="6" width="8" height="32"/g) || []).length;
   ok('2.8 90 barras por componente', barras === 180, barras);
 
   console.log('\n--- cores vindas do banco ---');
   ok('2.9 dia de 8400s pintou vermelho', /var\(--outage\)/.test(comps));
   ok('2.10 dia de 375s pintou amarelo',  /var\(--degraded\)/.test(comps));
-  ok('2.11 dia de deploy nao pintou, mas explica no tooltip',
-     /em deploy \(n\u00e3o conta para o SLA\)/.test(comps));
-  ok('2.12 dia de deploy com linha de base apagada', /opacity="0?\.3"/.test(comps));
+  ok('2.11 dia sem queda fica VERDE, nao transparente',
+     (comps.match(/fill="var\(--ok\)"/g) || []).length > 150,
+     (comps.match(/fill="var\(--ok\)"/g) || []).length);
+  ok('2.12 dia so com deploy/manutencao continua verde, explicado no tooltip',
+     /fora do SLA \(deploy ou manuten\u00e7\u00e3o\)/.test(comps));
+  ok('2.12b ... e mais claro, para quem reparar', /opacity="0\.45"/.test(comps));
 
   console.log('\n--- incidentes ---');
   const arts = (incs.match(/<article class="inc">/g) || []).length;
