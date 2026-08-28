@@ -20,16 +20,19 @@ const no = (name, type, typeVersion, position, parameters, extra = {}) =>
                   name, type, typeVersion, position }, extra);
 
 const workflow = {
-  name: 'Status â€” Ingestao de disponibilidade',
+  name: 'Status — Ingestao de disponibilidade',
   nodes: [
     // ---------------- gatilhos ----------------
     no('Telegram Trigger', 'n8n-nodes-base.telegramTrigger', 1.1, [-620, -160],
        { updates: ['message'], additionalFields: {} }),
 
-    no('Webhook SNS', 'n8n-nodes-base.webhook', 2, [-620, 20],
-       { httpMethod: 'POST', path: 'status/cloudwatch',
+    // Caminho `sla/aws` porque e onde o Grafana da KXC ja esta postando --
+    // mudar do lado deles seria atrito a toa. O no aceita os tres formatos:
+    // Grafana (legado e unificado), SNS/CloudWatch e aviso do Beanstalk.
+    no('Webhook alarmes', 'n8n-nodes-base.webhook', 2, [-620, 20],
+       { httpMethod: 'POST', path: 'sla/aws',
          responseMode: 'onReceived', options: {} },
-       { webhookId: 'status-cloudwatch' }),
+       { webhookId: 'status-alarmes' }),
 
     no('E-mail IMAP', 'n8n-nodes-base.emailReadImap', 2, [-620, 240],
        { mailbox: 'INBOX', postProcessAction: 'read', format: 'simple', options: {} }),
@@ -81,7 +84,7 @@ const workflow = {
     //
     // Se algum dia os dois reivindicassem o mesmo evento, o deliveryHash
     // em webhook_deliveries impediria a gravação em dobro.
-    'Webhook SNS': { main: [[
+    'Webhook alarmes': { main: [[
       { node: 'Normaliza CloudWatch', type: 'main', index: 0 },
       { node: 'Normaliza Beanstalk',  type: 'main', index: 0 },
     ]] },

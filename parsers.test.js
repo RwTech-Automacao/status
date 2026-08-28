@@ -172,6 +172,68 @@ ok('dep.4 saude normal continua marcada como health', e1.eventType, 'health');
 ok('dep.5 alerta de teste do Grafana e descartado',
    eb([{ textPlain: 'Someone is testing the alert notification within Grafana.' }])[0].json._route, 'skip');
 
+// ---- Grafana (o que a KXC esta mandando de verdade) ----
+// Payload real capturado do webhook. Nao tem nada de SNS: sem Type, sem
+// Message, sem AlarmName. O que salva o pareamento e o ruleName.
+const grafAlerta = { headers: { 'user-agent': 'Grafana', 'content-type': 'application/json' },
+  body: {
+    title: '[Alerting] RWTech - ElasticBeanstalk - EnvironmentHealth - api-tarefa-megas-producao',
+    ruleId: 5271,
+    ruleName: 'RWTech - ElasticBeanstalk - EnvironmentHealth - api-tarefa-megas-producao',
+    state: 'alerting',
+    evalMatches: [{ value: 25, metric: 'EnvironmentHealth',
+                    tags: { EnvironmentName: 'Api-tarefa-megas-producao-env' } }],
+    orgId: 1, dashboardId: 2522, panelId: 45,
+    tags: { ruleUrl: 'https://grafana.kxc.com.br/d/...' },
+    executionMode: 'production',
+  } };
+
+const grafOk = { headers: { 'user-agent': 'Grafana' },
+  body: {
+    title: '[OK] RWTech - ElasticBeanstalk - EnvironmentHealth - api-tarefa-megas-producao',
+    ruleId: 5271,
+    ruleName: 'RWTech - ElasticBeanstalk - EnvironmentHealth - api-tarefa-megas-producao',
+    state: 'ok',
+    evalMatches: [],     // vem VAZIO no ok -- nao pode quebrar o parser
+    orgId: 1, dashboardId: 2522, panelId: 45,
+  } };
+
+const ga = cw([grafAlerta])[0].json;
+const go = cw([grafOk])[0].json;
+
+ok('graf.1 alerta reconhecido',        ga._route, 'ingest');
+ok('graf.2 alerting vira ALARM',       ga.state, 'ALARM');
+ok('graf.3 ok vira OK',                go.state, 'OK');
+ok('graf.4 transporte marcado',        ga.transport, 'grafana');
+ok('graf.5 fingerprint = ruleName',    ga.fingerprint, NOME);
+ok('graf.6 fingerprint IDENTICO nos dois estados', ga.fingerprint === go.fingerprint, true);
+ok('graf.7 metrica do evalMatches',    ga.metric, 'EnvironmentHealth');
+ok('graf.8 recurso sai do nome',       ga.resource, 'api-tarefa-megas-producao');
+ok('graf.9 org e plataforma tambem',   ga.org + '/' + ga.platform, 'RWTech/ElasticBeanstalk');
+ok('graf.10 dimensao da AWS junto',    ga.awsDimension, 'Api-tarefa-megas-producao-env');
+ok('graf.11 motivo legivel',           ga.reason, 'EnvironmentHealth = 25');
+ok('graf.12 evalMatches vazio no ok nao quebra', go.reason, null);
+ok('graf.13 hora marcada como ENTREGA, nao evento', ga.timeSource, 'grafana_delivery');
+ok('graf.14 estado ignorado do Grafana',
+   cw([{ headers:{'user-agent':'Grafana'}, body:{ ruleName:'x', state:'paused' } }])[0].json._route, 'skip');
+
+// O MESMO alarme pelo Telegram tem o mesmo fingerprint -- entao um [ALARM]
+// do Grafana pode ser fechado por um [OK] do Telegram, e vice-versa.
+ok('graf.15 correlaciona com o Telegram', ga.fingerprint === tgAlarm.fingerprint, true);
+
+// Grafana 9+ (alerting unificado) traz startsAt: hora de verdade
+const gUni = cw([{ headers:{'user-agent':'Grafana'}, body: { status: 'firing', alerts: [
+  { status:'firing', startsAt:'2026-08-28T10:00:00Z',
+    labels:{ alertname: NOME, EnvironmentName:'Api-tarefa-megas-producao-env' },
+    annotations:{ summary:'EnvironmentHealth em 25' } } ] } }])[0].json;
+ok('graf.16 formato unificado tambem entra', gUni._route, 'ingest');
+ok('graf.17 usa startsAt, hora real',        gUni.occurredAt, '2026-08-28T10:00:00.000Z');
+ok('graf.18 fonte da hora rastreada',        gUni.timeSource, 'grafana_startsAt');
+
+// SNS de verdade continua funcionando
+ok('graf.19 nao roubou o caminho do SNS',
+   cw([{ body: envelope, headers: {} }])[0].json.transport, 'sns');
+
 // ---- Beanstalk chegando por WEBHOOK, nao por e-mail ----
 // E por aqui que os Severe vao entrar quando a KXC ligar o SNS. O mesmo
 // corpo, outro involucro: o parser tem que reconhecer os dois.
@@ -215,6 +277,9 @@ ok('excl.2 Beanstalk recusa alarme do CloudWatch',
    eb([{ body: envelope, headers: {} }])[0].json._route, 'skip');
 ok('excl.3 Beanstalk recusa confirmacao de assinatura',
    eb([{ body: { Type: 'SubscriptionConfirmation', SubscribeURL: 'https://x' } }])[0].json._route, 'skip');
+ok('excl.5 Beanstalk recusa o Grafana', eb([grafAlerta])[0].json._route, 'skip');
+ok('excl.6 Beanstalk recusa o Grafana unificado',
+   eb([{ headers:{'user-agent':'Grafana'}, body:{ status:'firing', alerts:[{}] } }])[0].json._route, 'skip');
 ok('excl.4 CloudWatch continua aceitando o que e dele',
    cw([{ body: envelope, headers: {} }])[0].json._route, 'ingest');
 

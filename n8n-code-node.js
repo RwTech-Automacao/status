@@ -157,25 +157,116 @@ function doTelegram(j) {
   }) };
 }
 
+function corpoDoWebhook(j) {
+  let env = j.body !== undefined ? j.body : j;
+  if (typeof env === 'string') {
+    try { env = JSON.parse(env); } catch (e) { return null; }
+  }
+  return (env && typeof env === 'object') ? env : null;
+}
+
+function tokenOk(j) {
+  if (!WEBHOOK_TOKEN) return true;
+  const h = j.headers || {}, q = j.query || {};
+  return (h['x-status-token'] || h['X-Status-Token'] || q.token) === WEBHOOK_TOKEN;
+}
+
+/* =========================================================================
+ * Grafana
+ *
+ * O alerta chega pelo Grafana, nao pelo SNS -- e o corpo nao tem nada de
+ * SNS: sem Type, sem Message, sem AlarmName.
+ *
+ * O que salva o pareamento e o `ruleName`: ele traz a MESMA convencao de
+ * nome dos alarmes ("RWTech - ElasticBeanstalk - EnvironmentHealth -
+ * api-tarefa-megas-producao") e e identico entre o [Alerting] e o [OK].
+ * Serve de fingerprint sem adaptacao -- e, de quebra, o mesmo alarme
+ * chegando por Telegram cai no MESMO incidente.
+ *
+ * LIMITACAO que precisa ficar visivel: o formato legado do Grafana NAO
+ * manda hora do evento. O melhor disponivel e a hora da entrega, que para
+ * um webhook e quase a hora real -- mas nao e ela. Por isso timeSource
+ * marca 'grafana_delivery': o atraso fica rastreavel em vez de virar
+ * precisao imaginaria.
+ * ====================================================================== */
+const ESTADO_GRAFANA = {
+  alerting: 'ALARM',
+  ok:       'OK',
+  no_data:  'INSUFFICIENT_DATA',
+  nodata:   'INSUFFICIENT_DATA',
+};
+
+function ehGrafana(j, env) {
+  const ua = String((j.headers || {})['user-agent'] || '');
+  if (/grafana/i.test(ua)) return true;
+  if (!env) return false;
+  // formato legado tem ruleName+state; o unificado tem alerts[]
+  return Boolean((env.ruleName && env.state) || Array.isArray(env.alerts));
+}
+
+function doGrafana(j, env) {
+  if (!tokenOk(j)) return pular('token invalido');
+
+  // ---- Grafana 9+ (alerting unificado): traz startsAt, hora de verdade ----
+  if (Array.isArray(env.alerts) && env.alerts.length) {
+    return env.alerts.map(a => {
+      const rot = (a.labels && (a.labels.alertname || a.labels.rulename)) || env.title;
+      if (!rot) return pular('alerta do Grafana sem nome');
+
+      const disparando = String(a.status || env.status || '').toLowerCase() === 'firing';
+      const quando = paraIso(disparando ? a.startsAt : a.endsAt) || new Date().toISOString();
+
+      return { json: montar({
+        estado: disparando ? 'ALARM' : 'OK',
+        nomeAlarme: String(rot).trim(),
+        occurredAt: quando,
+        timeSource: 'grafana_startsAt',
+        transport: 'grafana',
+        metric: a.labels && a.labels.metric,
+        reason: (a.annotations && (a.annotations.summary || a.annotations.description)) || null,
+        awsDimension: a.labels && (a.labels.EnvironmentName || a.labels.environmentname),
+      }) };
+    });
+  }
+
+  // ---- formato legado (o que a KXC esta mandando hoje) ----
+  const estado = ESTADO_GRAFANA[String(env.state || '').toLowerCase()];
+  if (!estado) return pular(`estado do Grafana ignorado: ${env.state}`);
+
+  const nomeAlarme = String(env.ruleName || env.title || '').trim()
+    // o title vem com o prefixo "[Alerting] "/"[OK] "; o ruleName nao.
+    // Tirar o prefixo e o que mantem o fingerprint igual nos dois estados.
+    .replace(/^\[[^\]]+\]\s*/, '');
+
+  if (!nomeAlarme) return pular('alerta do Grafana sem ruleName');
+
+  // evalMatches vem preenchido no alerting e VAZIO no ok -- por isso o
+  // opcional em tudo aqui.
+  const m = Array.isArray(env.evalMatches) && env.evalMatches.length ? env.evalMatches[0] : null;
+  const tags = (m && m.tags) || {};
+
+  return { json: montar({
+    estado,
+    nomeAlarme,
+    occurredAt: new Date().toISOString(),
+    timeSource: 'grafana_delivery',        // o legado nao manda hora do evento
+    transport: 'grafana',
+    metric: m && m.metric,
+    reason: m ? `${m.metric || 'valor'} = ${m.value}` : null,
+    awsDimension: tags.EnvironmentName || tags.environmentName || null,
+  }) };
+}
+
 /* =========================================================================
  * SNS via Webhook
  *
  * Pegadinha: o SNS posta com Content-Type "text/plain; charset=UTF-8", entao
  * o n8n costuma entregar `body` como STRING, nao objeto. Tratamos os dois.
  * ====================================================================== */
-function doSns(j) {
-  if (WEBHOOK_TOKEN) {
-    const h = j.headers || {};
-    const q = j.query || {};
-    const enviado = h['x-status-token'] || h['X-Status-Token'] || q.token;
-    if (enviado !== WEBHOOK_TOKEN) return pular('token invalido');
-  }
-
-  let env = j.body !== undefined ? j.body : j;
-  if (typeof env === 'string') {
-    try { env = JSON.parse(env); } catch (e) { return pular('corpo nao e JSON'); }
-  }
-  if (!env || typeof env !== 'object') return pular('corpo vazio');
+function doSns(j, env) {
+  if (!tokenOk(j)) return pular('token invalido');
+  if (!env) return pular('corpo nao e JSON');
+  {
 
   const tipo = env.Type || env.type;
 
@@ -222,6 +313,7 @@ function doSns(j) {
     title: corpo.AlarmDescription || null,
     awsDimension: dim ? dim.value : null,
   }) };
+  }
 }
 
 /* ===================================================================== */
@@ -232,8 +324,16 @@ for (const item of entrada) {
   const j = item.json || {};
   try {
     // Telegram tem `message`/`channel_post`; webhook tem `body`/`headers`.
-    const ehTelegram = Boolean(j.message || j.channel_post || j.edited_message || j.update_id);
-    saida.push(ehTelegram ? doTelegram(j) : doSns(j));
+    if (j.message || j.channel_post || j.edited_message || j.update_id) {
+      saida.push(doTelegram(j));
+      continue;
+    }
+
+    const env = corpoDoWebhook(j);
+    const r = ehGrafana(j, env) ? doGrafana(j, env) : doSns(j, env);
+
+    // doGrafana pode devolver varios itens (formato unificado manda alerts[])
+    if (Array.isArray(r)) saida.push(...r); else saida.push(r);
   } catch (e) {
     saida.push(pular(`erro no parser: ${e.message}`));
   }
