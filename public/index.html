@@ -197,6 +197,19 @@ footer a:hover{text-decoration:underline}
 @keyframes rise{from{opacity:0;transform:translateY(6px)}}
 
 /* ---------- estados: vazio, erro ---------- */
+.legenda{
+  display:flex;flex-wrap:wrap;gap:6px 20px;margin-top:20px;
+  font-size:12px;color:var(--ink-soft);
+}
+.legenda .sw{
+  display:inline-block;width:9px;height:13px;border-radius:2px;
+  margin-right:6px;vertical-align:-2px;
+}
+.sw.ok{background:var(--ok)}
+.sw.parcial{background:var(--dia-parcial)}
+.sw.fora{background:var(--dia-fora)}
+.sw.excl{background:var(--ok);opacity:.45}
+
 .aviso{
   border:1px solid var(--line);border-left:3px solid var(--primary);
   background:var(--wash);border-radius:6px;padding:15px 17px;
@@ -235,6 +248,12 @@ footer a:hover{text-decoration:underline}
       <span>últimos <b id="janela">90</b> dias · verde = sem queda · âmbar = menos de 1h · vermelho = mais de 1h</span>
     </div>
     <div id="components"></div>
+    <div class="legenda">
+      <span><i class="sw ok"></i>sem quedas</span>
+      <span><i class="sw parcial"></i>menos de 1h fora</span>
+      <span><i class="sw fora"></i>mais de 1h fora</span>
+      <span><i class="sw excl"></i>deploy ou máquina reduzida — não conta no SLA</span>
+    </div>
   </section>
 
   <section class="block">

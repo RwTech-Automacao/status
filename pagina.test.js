@@ -66,7 +66,7 @@ const tick = () => new Promise(r => setImmediate(r));
   ok('2.11 dia sem queda fica VERDE, nao transparente',
      (comps.match(/fill="var\(--ok\)"/g) || []).length > 150,
      (comps.match(/fill="var\(--ok\)"/g) || []).length);
-  ok('2.12 dia so com deploy/manutencao continua verde', /fora do SLA/.test(comps));
+  ok('2.12 dia so com deploy/manutencao continua verde', /não conta no SLA/.test(comps));
   ok('2.12b ... e mais claro, para quem reparar', /opacity="0\.45"/.test(comps));
 
   // ---- o tooltip diz DE QUE HORA A QUE HORA ----

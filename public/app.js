@@ -66,15 +66,27 @@ function barras(dias){
 
     const cor = COR[d.cor] || 'var(--ok)';
 
-    // O tooltip abre em linhas: o resumo do dia e, abaixo, cada janela de
-    // queda com hora de início e fim. Saber QUE HORAS foi é o que permite
-    // cruzar com deploy, pico de acesso ou janela de redução -- "1h17
-    // fora" sozinho não deixa investigar nada.
-    let t = d.segundos
-      ? dia(d.dia) + ' — ' + dur(d.segundos) + ' fora'
-      : soExcluido
-        ? dia(d.dia) + ' — ' + dur(d.segundos_excluidos) + ' fora do SLA'
-        : dia(d.dia) + ' — sem quedas';
+    // Tempo de RELÓGIO afetado, somado das faixas do dia. É diferente do
+    // número do SLA porque o SLA é ponderado: 'Degradado' pesa 0,25, então
+    // 3h30 degradado entram como 52 min. Mostrar só o ponderado ao lado de
+    // "20:30 → 00:00" parece erro; mostrar só o relógio esconderia como a
+    // conta é feita. Os dois aparecem quando divergem.
+    const relogio = (d.faixas || []).reduce((a, f) => {
+      const [h1,m1] = f.de.split(':').map(Number);
+      const [h2,m2] = f.ate.split(':').map(Number);
+      let s = ((h2*60 + m2) - (h1*60 + m1)) * 60;
+      if (s <= 0) s += 86400;          // termina na virada do dia
+      return a + s;
+    }, 0);
+
+    const noSla = d.segundos;
+    const mostraDois = relogio > 0 && Math.abs(relogio - noSla) > 60;
+
+    let t = dia(d.dia) + ' — ';
+    if (soExcluido)       t += dur(relogio || d.segundos_excluidos) + ' afetado · não conta no SLA';
+    else if (!noSla)      t += 'sem quedas';
+    else if (mostraDois)  t += dur(relogio) + ' afetado · ' + dur(noSla) + ' no cálculo do SLA';
+    else                  t += dur(noSla) + ' fora';
 
     // Quebra de linha via String.fromCharCode(10): o <title> do SVG aceita
     // multilinha, mas um "\n" escrito à mão dentro desta string já foi
