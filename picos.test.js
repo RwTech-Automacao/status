@@ -93,9 +93,12 @@ const tick = () => new Promise(r => setImmediate(r));
 
   console.log('\n--- ranking ---');
   const r = el.ranking.innerHTML;
+  // Cabecalho tem duas linhas (grupo + subdivisao), entao <tbody> e quem
+  // conta: um <tr> por componente.
+  const corpo = r.slice(r.indexOf('<tbody>'));
   ok('2.13 uma linha por componente',
-     (r.match(/<tr>/g) || []).length === payload.componentes.length + 1,
-     (r.match(/<tr>/g) || []).length - 1);
+     (corpo.match(/<tr>/g) || []).length === payload.componentes.length,
+     (corpo.match(/<tr>/g) || []).length);
   const primeiro = payload.componentes[0];
   ok('2.14 ordenado por fora-de-deploy (o pior primeiro)',
      r.indexOf(primeiro.nome) > 0 &&
@@ -106,17 +109,32 @@ const tick = () => new Promise(r => setImmediate(r));
 
   // Tempo de queda: RELOGIO no estado ruim, nao ponderado. Esta e a tela de
   // operacao -- o que importa e quanto tempo doeu, nao quanto pesa no SLA.
-  ok('2.16b tem coluna de tempo fora', /Tempo fora/.test(r));
-  ok('2.16b2 tem coluna de warnings', /<th class="n">Warnings<\/th>/.test(r));
+  ok('2.16b tem os tres grupos',
+     /colspan="2" class="g">Picos</.test(r) &&
+     /colspan="2" class="g">Warnings</.test(r) &&
+     /colspan="2" class="g">Quedas</.test(r));
+  ok('2.16b1 cada grupo tem qtd e tempo',
+     (r.match(/>qtd</g) || []).length === 2 && (r.match(/>tempo</g) || []).length === 2);
+  ok('2.16b2 coluna "Picos" solta saiu (era a soma das duas ao lado)',
+     !/>Picos<\/th>\s*<th class="n">/.test(r) &&
+     payload.componentes.every(c => c.picos === c.fora_de_deploy + c.em_deploy));
+
+  // Cada linha do corpo precisa ter exatamente as 8 celulas do cabecalho,
+  // senao os numeros escorregam para a coluna do vizinho -- que foi
+  // exatamente o defeito relatado.
+  const celulas = [...corpo.matchAll(/<tr>([\s\S]*?)<\/tr>/g)]
+    .map(m => (m[1].match(/<td/g) || []).length);
+  ok('2.16b3 toda linha tem 8 celulas, alinhadas com o cabecalho',
+     celulas.every(n => n === 8), [...new Set(celulas)].join(','));
 
   // `warnings` conta TUDO na faixa; `picos` exclui os que aconteceram
   // dentro de uma queda aberta. A diferenca conta outra historia: um
   // servico com 1 pico e 20 warnings nao esta piscando -- esta caindo e
   // oscilando, e o ranking de picos escondia isso.
   const divergem = payload.componentes.filter(c => c.warnings !== c.picos);
-  ok('2.16b3 warnings nunca e menor que picos',
+  ok('2.16b4 warnings nunca e menor que picos',
      payload.componentes.every(c => c.warnings >= c.picos));
-  ok('2.16b4 a diferenca aparece na tela',
+  ok('2.16b5 a diferenca aparece na tela',
      divergem.length === 0 ||
      divergem.every(c => r.includes('>' + c.warnings + '<')),
      divergem.length + ' divergem');

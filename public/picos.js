@@ -100,15 +100,29 @@ function ranking(comps){
   }
   const teto = Math.max(1, ...comps.map(c => c.fora_de_deploy));
 
+  // Cabeçalho em dois níveis porque o dado é agrupado, não uma lista de
+  // oito números soltos: PICOS tem duas leituras (fora/dentro de deploy),
+  // e WARNING e QUEDA têm cada um a contagem e o tempo. Em uma linha só,
+  // "TEMPO FORA" e "ÚLTIMO" acabavam encostados e o título parava de
+  // apontar para a coluna certa.
+  //
+  // A coluna "Picos" solta saiu: era a soma das duas ao lado
+  // (picos = fora_de_deploy + em_deploy) e só ocupava largura.
   $('ranking').innerHTML =
-    '<table><thead><tr>' +
-      '<th>Serviço</th><th class="n">Picos</th><th class="n">Fora de deploy</th>' +
-      '<th class="n">Em deploy</th>' +
-      // contagem e tempo lado a lado: o par so diz alguma coisa junto.
-      // 12 warnings de 2 min e outra historia que 2 warnings de 12 min.
-      '<th class="n">Warnings</th><th class="n">Tempo em warning</th>' +
-      '<th class="n">Quedas</th><th class="n">Tempo fora</th><th class="n">Último</th>' +
-    '</tr></thead><tbody>' +
+    '<table class="rank"><thead>' +
+      '<tr>' +
+        '<th rowspan="2">Serviço</th>' +
+        '<th colspan="2" class="g">Picos</th>' +
+        '<th colspan="2" class="g">Warnings</th>' +
+        '<th colspan="2" class="g">Quedas</th>' +
+        '<th rowspan="2" class="n g">Último</th>' +
+      '</tr>' +
+      '<tr class="sub">' +
+        '<th class="n g">fora deploy</th><th class="n">em deploy</th>' +
+        '<th class="n g">qtd</th><th class="n">tempo</th>' +
+        '<th class="n g">qtd</th><th class="n">tempo</th>' +
+      '</tr>' +
+    '</thead><tbody>' +
     comps.map(c =>
       '<tr>' +
         '<td><span class="svc">' + esc(c.nome) + '</span>' +
@@ -116,22 +130,26 @@ function ranking(comps){
             esc(c.ambiente) + '</span>' +
           '<div class="barra" style="width:' +
             Math.round((c.fora_de_deploy / teto) * 100) + '%;margin-top:6px"></div></td>' +
-        '<td class="n num">' + c.picos + '</td>' +
-        '<td class="n num"><b>' + c.fora_de_deploy + '</b></td>' +
+
+        '<td class="n num g"><b>' + c.fora_de_deploy + '</b></td>' +
         '<td class="n num mut">' + c.em_deploy + '</td>' +
+
         // `warnings` conta TUDO na faixa; `picos` exclui os que aconteceram
-        // dentro de uma queda ja aberta. Quando batem, nao repete o numero.
-        '<td class="n num' + (c.warnings ? '' : ' mut') + '">' +
+        // dentro de uma queda já aberta. A diferença é a história: 1 pico e
+        // 20 warnings não é "piscou", é "caiu e ficou oscilando".
+        '<td class="n num g' + (c.warnings ? '' : ' mut') + '">' +
           (c.warnings ?? c.picos) + '</td>' +
         '<td class="n num' + (c.min_em_warning ? '' : ' mut') + '">' +
           minutos(c.min_em_warning) + '</td>' +
-        '<td class="n num' + (c.quedas ? '' : ' mut') + '">' + c.quedas + '</td>' +
-        // tempo de RELOGIO no estado ruim, nao ponderado: esta e a tela de
-        // operacao, onde o que importa e quanto tempo doeu -- nao quanto
+
+        '<td class="n num g' + (c.quedas ? '' : ' mut') + '">' + c.quedas + '</td>' +
+        // tempo de RELÓGIO no estado ruim, não ponderado: esta é a tela de
+        // operação, onde o que importa é quanto tempo doeu -- não quanto
         // isso pesa no SLA
         '<td class="n num' + (c.min_em_queda ? '' : ' mut') + '">' +
           (c.min_em_queda ? minutos(c.min_em_queda) : '—') + '</td>' +
-        '<td class="n num mut">' + hora(c.ultimo) + '</td>' +
+
+        '<td class="n num mut g">' + hora(c.ultimo) + '</td>' +
       '</tr>').join('') +
     '</tbody></table>';
 }
