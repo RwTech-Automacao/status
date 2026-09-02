@@ -139,6 +139,14 @@ table.rank{width:100%;border-collapse:collapse;font-size:14px}
 .barra{height:5px;border-radius:3px;background:var(--degraded);min-width:3px}
 .mut{color:var(--ink-soft)}
 
+/* "+" discreto: o tempo mostrado e um piso, porque algum periodo teve o
+   evento de recuperacao perdido. Melhor um sinal que se explica no
+   tooltip do que um numero incompleto passando por exato. */
+.piso{color:var(--degraded);font-weight:600;margin-left:2px;cursor:help}
+/* "↗": estado ainda aberto. Ou o serviço segue assim, ou o evento de
+   normalização se perdeu -- as duas hipóteses pedem alguém olhando. */
+.curso{color:var(--primary);font-weight:600;margin-left:2px;cursor:help}
+
 /* ---------- eventos ---------- */
 .ev{display:grid;grid-template-columns:56px 1fr;gap:12px;
   padding:10px 0;border-bottom:1px solid var(--line);font-size:13.5px}

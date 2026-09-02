@@ -93,6 +93,22 @@ function grafico(serie, balde){
 }
 
 // ---------------------------------------------------------------------
+function marcaTempo(min, semFim, emCurso){
+  const dicas = [];
+  if (semFim)  dicas.push(semFim + ' período(s) sem o evento de recuperação — ' +
+                          'o tempo mostrado é um piso');
+  if (emCurso) dicas.push('ainda em curso — ou o serviço segue assim, ou o ' +
+                          'evento de normalização se perdeu');
+
+  const marca = (semFim  ? '<span class="piso">+</span>' : '') +
+                (emCurso ? '<span class="curso">↗</span>' : '');
+
+  return '<td class="n num' + (min ? '' : ' mut') + '"' +
+         (dicas.length ? ' title="' + esc(dicas.join(' · ')) + '"' : '') + '>' +
+         minutos(min) + marca + '</td>';
+}
+
+// ---------------------------------------------------------------------
 function ranking(comps){
   if (!comps.length) {
     $('ranking').innerHTML = '<div class="aviso">Nenhum pico nesse período.</div>';
@@ -111,8 +127,6 @@ function ranking(comps){
   const COLS = [
     ['Serviço',          'svc'],
     ['Picos',            'n'],
-    ['Fora de deploy',   'n'],
-    ['Em deploy',        'n'],
     ['Warnings',         'n'],
     ['Tempo em warning', 'n'],
     ['Quedas',           'n'],
@@ -134,16 +148,21 @@ function ranking(comps){
             Math.round((c.fora_de_deploy / teto) * 100) + '%;margin-top:6px"></div></td>' +
 
         '<td class="n num">' + c.picos + '</td>' +
-        '<td class="n num"><b>' + c.fora_de_deploy + '</b></td>' +
-        '<td class="n num mut">' + c.em_deploy + '</td>' +
 
         // `warnings` conta TUDO na faixa; `picos` exclui os que aconteceram
         // dentro de uma queda já aberta. A diferença é a história: 1 pico e
         // 20 warnings não é "piscou", é "caiu e ficou oscilando".
         '<td class="n num' + (c.warnings ? '' : ' mut') + '">' +
           (c.warnings ?? c.picos) + '</td>' +
-        '<td class="n num' + (c.min_em_warning ? '' : ' mut') + '">' +
-          minutos(c.min_em_warning) + '</td>' +
+        // Dois motivos diferentes para o número não ser exato, e a tela
+        // distingue porque a ação é outra em cada caso:
+        //
+        //   +  transição de fim PERDIDA. O tempo está limitado pelo teto,
+        //      então é um piso -- o real é maior.
+        //   ↗  ainda em curso. Ou o serviço está mesmo assim desde então,
+        //      ou o "voltou ao normal" se perdeu. As duas hipóteses pedem
+        //      alguém olhando, e é por isso que o marcador existe.
+        marcaTempo(c.min_em_warning, c.periodos_sem_fim, c.periodos_em_curso) +
 
         '<td class="n num' + (c.quedas ? '' : ' mut') + '">' + c.quedas + '</td>' +
         // tempo de RELÓGIO no estado ruim, não ponderado: esta é a tela de

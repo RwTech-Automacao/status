@@ -116,12 +116,22 @@ const tick = () => new Promise(r => setImmediate(r));
   ok('2.16b cabecalho de uma linha so',
      (r.match(/<tr>/g) || []).length === payload.componentes.length + 1,
      (r.match(/<tr>/g) || []).length);
-  ok('2.16b1 nove colunas, na ordem esperada',
-     cabec.join('|') === 'Serviço|Picos|Fora de deploy|Em deploy|Warnings|' +
-                         'Tempo em warning|Quedas|Tempo fora|Último',
+  ok('2.16b1 sete colunas, na ordem esperada',
+     cabec.join('|') === 'Serviço|Picos|Warnings|Tempo em warning|' +
+                         'Quedas|Tempo fora|Último',
      cabec.join(' | '));
-  ok('2.16b2 picos continua sendo a soma de fora + em deploy',
-     payload.componentes.every(c => c.picos === c.fora_de_deploy + c.em_deploy));
+
+  // Quando o tempo nao e exato, a tela diz -- em vez de apresentar um
+  // numero incompleto como se fosse a verdade.
+  const semFim  = payload.componentes.filter(c => c.periodos_sem_fim > 0);
+  const emCurso = payload.componentes.filter(c => c.periodos_em_curso > 0);
+  ok('2.16b2 fim perdido vem marcado com "+"',
+     semFim.length === 0 || /class="piso">\+</.test(r), semFim.length + ' com buraco');
+  ok('2.16b2b estado aberto vem marcado com seta',
+     emCurso.length === 0 || /class="curso">/.test(r), emCurso.length + ' em curso');
+  ok('2.16b2c a marca explica no title',
+     (semFim.length + emCurso.length) === 0 ||
+     /title="[^"]*(recupera|em curso)/.test(r));
 
   // Cada linha do corpo precisa ter exatamente as 8 celulas do cabecalho,
   // senao os numeros escorregam para a coluna do vizinho -- que foi

@@ -876,6 +876,89 @@ begin
     (downtime_seconds(cid,'2026-08-10 00:00-03','2026-08-12 00:00-03') > 0), true);
 end $$;
 
+-- =====================================================================
+-- 24. Transicao de fim PERDIDA nao pode inflar o tempo
+--
+-- Achado em producao: 9,5% das transicoes tinham buraco -- o proximo
+-- evento dizia ter vindo de OUTRO estado, provando que a transicao de
+-- volta nunca chegou. O tempo era esticado ate o proximo evento e um
+-- Warning de 2 min virava 24 h. Eram 273 h infladas no historico.
+-- =====================================================================
+do $$
+declare cid bigint; r record;
+begin
+  insert into components (slug,name,environment,created_at)
+  values ('teste-buraco','Buraco','producao','2026-01-01') returning id into cid;
+
+  -- caso SADIO: entra e sai, o proximo confirma ter vindo de Warning
+  insert into health_events (component_id,fingerprint,source,from_state,to_state,severity,occurred_at)
+  values (cid,'fp','beanstalk','Ok','Warning',3,'2026-08-10 10:00-03'),
+         (cid,'fp','beanstalk','Warning','Ok',0,'2026-08-10 10:30-03');
+
+  select * into r from estados_no_periodo('2026-08-10 00:00-03','2026-08-11 00:00-03')
+   where component_id=cid and severity=3;
+  perform assert_eq('24.1 intervalo fechado conta inteiro', round(r.segundos/60), 30::numeric);
+  perform assert_eq('24.2 ... e vem marcado como confirmado', r.confirmado, true);
+
+  -- caso COM BURACO: entra em Warning e o proximo evento diz vir de "Ok".
+  -- O "Warning -> Ok" se perdeu; nao da para saber quando acabou.
+  --
+  -- A janela precisa ALCANCAR o proximo evento: e ele que denuncia o
+  -- buraco. Se ficasse de fora, dentro da janela nao haveria evidencia
+  -- nenhuma de que o estado acabou -- e esticar ate o fim da janela
+  -- seria, ai sim, a leitura correta.
+  insert into health_events (component_id,fingerprint,source,from_state,to_state,severity,occurred_at)
+  values (cid,'fp2','beanstalk','Ok','Warning',3,'2026-08-12 01:00-03'),
+         (cid,'fp2','beanstalk','Ok','Warning',3,'2026-08-13 01:00-03');
+
+  select * into r from estados_no_periodo('2026-08-12 00:00-03','2026-08-13 12:00-03')
+   where component_id=cid and severity=3 and ini = '2026-08-12 01:00-03';
+  perform assert_eq('24.3 buraco NAO estica ate o proximo evento',
+    (r.segundos <= setting_num('limite_estado_sem_fim_min',15)*60), true);
+  perform assert_eq('24.4 ... e vem marcado como nao confirmado', r.confirmado, false);
+  perform assert_eq('24.5 sem o teto seriam 24 h', round(r.segundos/60), 15::numeric);
+
+  -- e o proximo evento, que nao tem sucessor, fica em curso ate o fim da
+  -- janela -- sem prova de que acabou, o tempo nao e mexido
+  select * into r from estados_no_periodo('2026-08-12 00:00-03','2026-08-13 12:00-03')
+   where component_id=cid and severity=3 and ini = '2026-08-13 01:00-03';
+  perform assert_eq('24.5b sem sucessor, o estado persiste na janela',
+    round(r.segundos/60), 660::numeric);
+  perform assert_eq('24.5c ... marcado como em curso', r.em_curso, true);
+end $$;
+
+-- from_state nulo (CloudWatch/Grafana) NAO conta como buraco
+do $$
+declare cid bigint; r record;
+begin
+  select id into cid from components where slug='teste-buraco';
+  insert into health_events (component_id,fingerprint,source,from_state,to_state,severity,occurred_at)
+  values (cid,'fp3','cloudwatch',null,'Alarm',5,'2026-08-14 10:00-03'),
+         (cid,'fp3','cloudwatch',null,'Ok',0,'2026-08-14 12:00-03');
+
+  select * into r from estados_no_periodo('2026-08-14 00:00-03','2026-08-15 00:00-03')
+   where component_id=cid and severity=5;
+  perform assert_eq('24.6 sem from_state nao e buraco: conta as 2 h',
+    round(r.segundos/60), 120::numeric);
+  perform assert_eq('24.7 ... tratado como confirmado', r.confirmado, true);
+end $$;
+
+-- estado ainda ABERTO: sem prova de que acabou, o tempo nao e mexido --
+-- so marcado, para alguem olhar
+do $$
+declare cid bigint; r record;
+begin
+  select id into cid from components where slug='teste-buraco';
+  insert into health_events (component_id,fingerprint,source,from_state,to_state,severity,occurred_at)
+  values (cid,'fp4','beanstalk','Ok','Warning',3, now() - interval '3 hours');
+
+  select * into r from estados_no_periodo(now()-interval '6 hours', now())
+   where component_id=cid and fingerprint='fp4';
+  perform assert_eq('24.8 estado aberto conta ate agora',
+    (r.segundos between 10700 and 10900), true);
+  perform assert_eq('24.9 ... marcado como em curso', r.em_curso, true);
+end $$;
+
 select '=========  TODOS OS TESTES PASSARAM  =========' as resultado;
 
 

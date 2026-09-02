@@ -49,6 +49,16 @@ $fn$;
 -- por estar mal há muito tempo. Sete dias de folga cobrem qualquer caso
 -- real sem varrer a tabela inteira.
 -- ---------------------------------------------------------------------
+insert into sla_settings (key, value, description) values
+  ('limite_estado_sem_fim_min', '15',
+   'Teto, em minutos, para um estado cujo fim NAO foi observado -- quando o proximo evento diz ter vindo de outro estado, provando que houve uma transicao perdida.')
+on conflict (key) do nothing;
+
+-- A funcao ganhou a coluna `confirmado`, e o Postgres nao deixa trocar o
+-- tipo de retorno com CREATE OR REPLACE. O drop e seguro: quem a usa
+-- (picos_json) so a chama, sem dependencia registrada.
+drop function if exists estados_no_periodo(timestamptz, timestamptz);
+
 create or replace function estados_no_periodo(
   p_de  timestamptz,
   p_ate timestamptz
@@ -59,26 +69,77 @@ create or replace function estados_no_periodo(
   is_deploy    boolean,
   ini          timestamptz,
   fim          timestamptz,
-  segundos     numeric
+  segundos     numeric,
+  confirmado   boolean,
+  em_curso     boolean
 )
 language sql stable as $fn$
-  with e as (
+  with lim as (
+    select setting_num('limite_estado_sem_fim_min', 15) * 60 as seg
+  ),
+  e as (
     select he.component_id, he.fingerprint, he.severity, he.is_deploy,
-           he.occurred_at,
-           lead(he.occurred_at) over (partition by he.component_id, he.fingerprint
-                                          order by he.occurred_at) as proximo
+           he.to_state, he.occurred_at,
+           lead(he.occurred_at) over w as proximo,
+           lead(he.from_state)  over w as prox_veio_de
       from health_events he
      where he.severity is not null
        and he.occurred_at >= p_de - interval '7 days'
        and he.occurred_at <  p_ate
+    window w as (partition by he.component_id, he.fingerprint order by he.occurred_at)
+  ),
+  fechado as (
+    select e.*,
+           -- BURACO: o proximo evento afirma ter vindo de OUTRO estado. Isso
+           -- e prova de que houve uma transicao que nunca chegou -- o e-mail
+           -- de recuperacao se perdeu. Acontece em ~10% das transicoes aqui.
+           --
+           -- Sem isso, o estado era esticado ate o proximo evento: um Warning
+           -- as 01:25 cujo "Ok" sumiu virava 24 h de warning, todo santo dia.
+           -- Eram 273 h infladas no historico.
+           --
+           -- from_state nulo (alarme do CloudWatch/Grafana, que nao manda o
+           -- estado de origem) NAO conta como buraco: ali o par ALARM/OK e
+           -- explicito e confiavel.
+           (e.proximo is not null
+              and e.prox_veio_de is not null
+              and e.prox_veio_de is distinct from e.to_state) as tem_buraco
+      from e
   )
-  select e.component_id, e.fingerprint, e.severity, e.is_deploy,
-         greatest(e.occurred_at, p_de)                          as ini,
-         least(coalesce(e.proximo, p_ate), p_ate)               as fim,
-         extract(epoch from (least(coalesce(e.proximo, p_ate), p_ate)
-                             - greatest(e.occurred_at, p_de)))::numeric as segundos
-    from e
-   where least(coalesce(e.proximo, p_ate), p_ate) > greatest(e.occurred_at, p_de);
+  select f.component_id, f.fingerprint, f.severity, f.is_deploy,
+         greatest(f.occurred_at, p_de) as ini,
+         least(
+           case when f.tem_buraco
+                -- so sabemos que comecou; o fim fica limitado ao teto
+                then least(f.proximo, f.occurred_at + make_interval(secs => lim.seg))
+                -- sem proximo evento, o estado PERSISTE: o Beanstalk so
+                -- avisa em transicao, entao silencio significa "continua
+                -- assim". Estender ate agora e o certo aqui.
+                else coalesce(f.proximo, p_ate)
+           end, p_ate) as fim,
+         extract(epoch from (
+           least(
+             case when f.tem_buraco
+                  then least(f.proximo, f.occurred_at + make_interval(secs => lim.seg))
+                  else coalesce(f.proximo, p_ate)
+             end, p_ate)
+           - greatest(f.occurred_at, p_de)))::numeric as segundos,
+         -- 'confirmado' = vimos o evento que encerrou este estado.
+         -- Falso em dois casos bem diferentes, e a tela distingue:
+         --   buraco  -> PROVA de transicao perdida (o proximo diz ter vindo
+         --              de outro estado). Tempo limitado pelo teto.
+         --   em curso-> nenhum evento depois. Pode ser um estado que
+         --              realmente persiste (o Beanstalk so avisa em
+         --              transicao) ou uma recuperacao que se perdeu. Sem
+         --              prova, nao mexemos no tempo -- so avisamos.
+         not f.tem_buraco as confirmado,
+         (f.proximo is null) as em_curso
+    from fechado f cross join lim
+   where least(
+           case when f.tem_buraco
+                then least(f.proximo, f.occurred_at + make_interval(secs => lim.seg))
+                else coalesce(f.proximo, p_ate)
+           end, p_ate) > greatest(f.occurred_at, p_de);
 $fn$;
 
 -- ---------------------------------------------------------------------
@@ -121,6 +182,11 @@ language sql stable as $fn$
     select ep.component_id,
            sum(ep.segundos) filter (where ep.severity >= 3 and ep.severity < j.limiar) as seg_warning,
            sum(ep.segundos) filter (where ep.severity >= j.limiar)                     as seg_incidente,
+           -- quantos periodos tiveram o fim PERDIDO (transicao que nunca
+           -- chegou). O tempo deles esta limitado ao teto, entao o numero
+           -- ao lado e um piso, nao a verdade.
+           count(*) filter (where not ep.confirmado and ep.severity >= 3)               as sem_fim,
+           count(*) filter (where ep.em_curso and ep.severity >= 3)                     as em_curso,
            max(ep.severity)                                                            as pior
       from estados_no_periodo(p_de, p_ate) ep
      cross join j
@@ -137,12 +203,14 @@ language sql stable as $fn$
            max(ev.occurred_at)                                        as ultimo,
            coalesce(round(t.seg_warning   / 60.0), 0)                 as min_em_warning,
            coalesce(round(t.seg_incidente / 60.0), 0)                 as min_em_queda,
+           coalesce(t.sem_fim, 0)                                     as periodos_sem_fim,
+           coalesce(t.em_curso, 0)                                    as periodos_em_curso,
            coalesce(t.pior, 0)                                        as pior_severidade
       from components c
       join ev on ev.component_id = c.id
       left join tempo t on t.component_id = c.id
      group by c.id, c.slug, c.name, c.environment, c.published,
-              t.seg_warning, t.seg_incidente, t.pior
+              t.seg_warning, t.seg_incidente, t.sem_fim, t.em_curso, t.pior
   ),
   serie as (
     select date_bin((select balde from j), ev.occurred_at, (select de from j)) as inicio,
@@ -180,6 +248,8 @@ language sql stable as $fn$
                'quedas',          r.eventos_de_queda,
                'min_em_warning',  r.min_em_warning,
                'min_em_queda',    r.min_em_queda,
+               'periodos_sem_fim',  r.periodos_sem_fim,
+               'periodos_em_curso', r.periodos_em_curso,
                'pior_severidade', r.pior_severidade,
                'pior_estado',     eb_state_label(r.pior_severidade),
                'ultimo',          to_char(r.ultimo at time zone p_tz, 'YYYY-MM-DD"T"HH24:MI:SS')
