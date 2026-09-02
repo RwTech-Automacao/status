@@ -67,7 +67,11 @@ const tick = () => new Promise(r => setImmediate(r));
      (comps.match(/fill="var\(--ok\)"/g) || []).length > 150,
      (comps.match(/fill="var\(--ok\)"/g) || []).length);
   ok('2.12 dia so com deploy/manutencao continua verde', /não conta no SLA/.test(comps));
-  ok('2.12b ... e mais claro, para quem reparar', /opacity="0\.45"/.test(comps));
+  // Cor propria e SOLIDA, nao o verde normal com opacity: meia
+  // transparencia le como falha de renderizacao, e ja gerou duvida duas
+  // vezes. Cor propria le como estado.
+  ok('2.12b ... com cor propria', /fill="var\(--dia-excluido\)"/.test(comps));
+  ok('2.12b2 e sem opacity nenhuma nas barras', !/opacity="/.test(comps));
 
   // ---- o tooltip diz DE QUE HORA A QUE HORA ----
   // "1h17 fora" sozinho nao deixa investigar nada; com o horario da-se

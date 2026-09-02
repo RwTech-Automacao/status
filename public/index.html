@@ -34,6 +34,12 @@
      vermelho carregar sozinho o peso de "isso foi grave". */
   --dia-parcial:#F0A93C;
   --dia-fora:#CE3226;
+
+  /* Dia em que houve queda, mas dentro de deploy ou de máquina reduzida.
+     Verde mais claro e SÓLIDO, não o verde normal com opacity: meia
+     transparência lê como falha de renderização, não como estado -- e
+     duas pessoas já perguntaram o que era. Cor própria lê como decisão. */
+  --dia-excluido:#A3D8C1;
   --outage:#CE3226;
   --maint:#5B54C9;
 
@@ -208,7 +214,7 @@ footer a:hover{text-decoration:underline}
 .sw.ok{background:var(--ok)}
 .sw.parcial{background:var(--dia-parcial)}
 .sw.fora{background:var(--dia-fora)}
-.sw.excl{background:var(--ok);opacity:.45}
+.sw.excl{background:var(--dia-excluido)}
 
 .aviso{
   border:1px solid var(--line);border-left:3px solid var(--primary);

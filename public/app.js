@@ -59,12 +59,13 @@ const esc = s => String(s ?? '').replace(/[<>&"]/g,
 // ---------------------------------------------------------------------
 function barras(dias){
   return dias.map((d,i) => {
-    // Dia em que só houve deploy ou janela de manutenção: continua verde,
-    // porque não queimou SLA. Fica um tom mais claro para quem reparar,
-    // e o tooltip conta o que houve.
+    // Dia em que houve queda, mas só dentro de deploy ou de máquina
+    // reduzida: verde mais claro, porque não queimou SLA -- e sólido, não
+    // o verde normal com opacity. Meia transparência lê como falha de
+    // renderização; cor própria lê como estado.
     const soExcluido = !d.segundos && d.segundos_excluidos > 0;
 
-    const cor = COR[d.cor] || 'var(--ok)';
+    const cor = soExcluido ? 'var(--dia-excluido)' : (COR[d.cor] || 'var(--ok)');
 
     // Tempo de RELÓGIO afetado, somado das faixas do dia. É diferente do
     // número do SLA porque o SLA é ponderado: 'Degradado' pesa 0,25, então
@@ -100,8 +101,7 @@ function barras(dias){
     }
 
     return '<g><title>' + esc(t) + '</title>' +
-      '<rect x="' + (i*10) + '" y="6" width="8" height="32" rx="2" fill="' + cor + '"' +
-        (soExcluido ? ' opacity="0.45"' : '') + '/>' +
+      '<rect x="' + (i*10) + '" y="6" width="8" height="32" rx="2" fill="' + cor + '"/>' +
       '<rect x="' + (i*10 - 1) + '" y="0" width="10" height="44" fill="transparent"/></g>';
   }).join('');
 }
