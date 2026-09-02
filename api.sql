@@ -252,10 +252,28 @@ language sql stable as $fn$
                'dia',                d.dia,
                'segundos',           round(d.segundos)::int,
                'segundos_excluidos', round(d.segundos_excluidos)::int,
-               -- a cor sai do banco: a pagina nao decide o que e um dia ruim
-               'cor', case when d.segundos > lim.vermelho then 'vermelho'
-                           when d.segundos > 0            then 'amarelo'
-                           else                                'ok' end
+               -- A COR diz o que ACONTECEU; o uptime diz o que CONTA.
+               --
+               -- Antes a cor vinha so de `segundos` (o que conta para o
+               -- SLA), entao uma queda de 1 minuto dentro da janela de
+               -- maquina reduzida deixava o dia verde. Caiu e caiu: a
+               -- maquina reduzida explica POR QUE caiu com mais facilidade,
+               -- nao transforma indisponibilidade em dia limpo.
+               --
+               -- Quem faz a exclusao continua sendo o uptime, que ignora
+               -- `segundos_excluidos`. A cor passa a olhar o total.
+               'cor', case when d.segundos + d.segundos_excluidos > lim.vermelho then 'vermelho'
+                           when d.segundos + d.segundos_excluidos > 0            then 'amarelo'
+                           else                                                       'ok' end,
+
+               -- ...e este diz se aquilo entrou na conta. A pagina usa o
+               -- primeiro para a cor e o segundo para a intensidade: mesmo
+               -- tom, mais claro quando nao contou.
+               --
+               -- Dia limpo e `true` de vazio: nao houve nada que pudesse
+               -- deixar de contar. Falso so quando houve queda E nenhuma
+               -- parte dela entrou no SLA.
+               'conta_sla', (d.segundos > 0 or d.segundos + d.segundos_excluidos = 0)
              )
              -- so nos dias que tiveram alguma coisa; nos outros a chave nem
              -- existe, e sao a esmagadora maioria

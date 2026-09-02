@@ -35,11 +35,16 @@
   --dia-parcial:#F0A93C;
   --dia-fora:#CE3226;
 
-  /* Dia em que houve queda, mas dentro de deploy ou de máquina reduzida.
-     Verde mais claro e SÓLIDO, não o verde normal com opacity: meia
-     transparência lê como falha de renderização, não como estado -- e
-     duas pessoas já perguntaram o que era. Cor própria lê como decisão. */
-  --dia-excluido:#A3D8C1;
+  /* Tons claros para o que ACONTECEU mas NÃO CONTOU no SLA (deploy ou
+     máquina reduzida). Mesma matiz da severidade, mais clara: a cor diz
+     que caiu, a intensidade diz se entrou na conta.
+
+     A versão anterior pintava esses dias de verde, porque a cor vinha do
+     downtime que conta. Ficava errado no olho e no espírito: uma queda de
+     1 minuto às 22h continua sendo uma queda -- a máquina reduzida explica
+     por que aconteceu, não faz não ter acontecido. */
+  --dia-parcial-claro:#F8DCAF;
+  --dia-fora-claro:#EFB3AC;
   --outage:#CE3226;
   --maint:#5B54C9;
 
@@ -214,7 +219,7 @@ footer a:hover{text-decoration:underline}
 .sw.ok{background:var(--ok)}
 .sw.parcial{background:var(--dia-parcial)}
 .sw.fora{background:var(--dia-fora)}
-.sw.excl{background:var(--dia-excluido)}
+.sw.excl{background:var(--dia-parcial-claro)}
 
 .aviso{
   border:1px solid var(--line);border-left:3px solid var(--primary);
@@ -258,7 +263,7 @@ footer a:hover{text-decoration:underline}
       <span><i class="sw ok"></i>sem quedas</span>
       <span><i class="sw parcial"></i>menos de 1h fora</span>
       <span><i class="sw fora"></i>mais de 1h fora</span>
-      <span><i class="sw excl"></i>deploy ou máquina reduzida — não conta no SLA</span>
+      <span><i class="sw excl"></i>tom claro = não conta no SLA (deploy ou máquina reduzida)</span>
     </div>
   </section>
 

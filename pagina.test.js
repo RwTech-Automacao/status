@@ -66,12 +66,18 @@ const tick = () => new Promise(r => setImmediate(r));
   ok('2.11 dia sem queda fica VERDE, nao transparente',
      (comps.match(/fill="var\(--ok\)"/g) || []).length > 150,
      (comps.match(/fill="var\(--ok\)"/g) || []).length);
-  ok('2.12 dia so com deploy/manutencao continua verde', /não conta no SLA/.test(comps));
-  // Cor propria e SOLIDA, nao o verde normal com opacity: meia
-  // transparencia le como falha de renderizacao, e ja gerou duvida duas
-  // vezes. Cor propria le como estado.
-  ok('2.12b ... com cor propria', /fill="var\(--dia-excluido\)"/.test(comps));
-  ok('2.12b2 e sem opacity nenhuma nas barras', !/opacity="/.test(comps));
+  // A MATIZ diz o que aconteceu; a INTENSIDADE diz se contou no SLA.
+  // Um dia com queda nunca e verde -- nem quando a queda nao contou. A
+  // maquina reduzida explica POR QUE caiu, nao faz nao ter caido.
+  ok('2.12 dia com queda excluida NAO fica verde',
+     payload.componentes.flatMap(c => c.dias)
+       .every(d => !(d.segundos_excluidos > 0 && !d.segundos && d.cor === 'ok')));
+  ok('2.12b ... usa o tom claro da mesma cor',
+     /fill="var\(--dia-parcial-claro\)"|fill="var\(--dia-fora-claro\)"/.test(comps));
+  ok('2.12b2 dia limpo continua no verde cheio',
+     payload.componentes.flatMap(c => c.dias)
+       .filter(d => d.cor === 'ok').every(d => d.conta_sla === true));
+  ok('2.12b3 sem opacity nenhuma nas barras', !/opacity="/.test(comps));
 
   // ---- o tooltip diz DE QUE HORA A QUE HORA ----
   // "1h17 fora" sozinho nao deixa investigar nada; com o horario da-se
