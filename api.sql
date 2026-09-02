@@ -252,19 +252,18 @@ language sql stable as $fn$
                'dia',                d.dia,
                'segundos',           round(d.segundos)::int,
                'segundos_excluidos', round(d.segundos_excluidos)::int,
-               -- A COR diz o que ACONTECEU; o uptime diz o que CONTA.
+               -- A cor olha SO o que conta para o SLA. Queda dentro de
+               -- deploy ou de maquina reduzida deixa o dia verde -- a
+               -- degradacao ali e consequencia esperada de uma decisao
+               -- deliberada, e uma pagina de status existe para destacar o
+               -- inesperado.
                --
-               -- Antes a cor vinha so de `segundos` (o que conta para o
-               -- SLA), entao uma queda de 1 minuto dentro da janela de
-               -- maquina reduzida deixava o dia verde. Caiu e caiu: a
-               -- maquina reduzida explica POR QUE caiu com mais facilidade,
-               -- nao transforma indisponibilidade em dia limpo.
-               --
-               -- Quem faz a exclusao continua sendo o uptime, que ignora
-               -- `segundos_excluidos`. A cor passa a olhar o total.
-               'cor', case when d.segundos + d.segundos_excluidos > lim.vermelho then 'vermelho'
-                           when d.segundos + d.segundos_excluidos > 0            then 'amarelo'
-                           else                                                       'ok' end,
+               -- O evento nao some: o tooltip do dia mostra o horario, a
+               -- duracao e o motivo. Some so da cor, que e o canal de
+               -- "precisa de atencao".
+               'cor', case when d.segundos > lim.vermelho then 'vermelho'
+                           when d.segundos > 0            then 'amarelo'
+                           else                                'ok' end,
 
                -- ...e este diz se aquilo entrou na conta. A pagina usa o
                -- primeiro para a cor e o segundo para a intensidade: mesmo

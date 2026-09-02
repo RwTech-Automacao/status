@@ -66,18 +66,19 @@ const tick = () => new Promise(r => setImmediate(r));
   ok('2.11 dia sem queda fica VERDE, nao transparente',
      (comps.match(/fill="var\(--ok\)"/g) || []).length > 150,
      (comps.match(/fill="var\(--ok\)"/g) || []).length);
-  // A MATIZ diz o que aconteceu; a INTENSIDADE diz se contou no SLA.
-  // Um dia com queda nunca e verde -- nem quando a queda nao contou. A
-  // maquina reduzida explica POR QUE caiu, nao faz nao ter caido.
-  ok('2.12 dia com queda excluida NAO fica verde',
-     payload.componentes.flatMap(c => c.dias)
-       .every(d => !(d.segundos_excluidos > 0 && !d.segundos && d.cor === 'ok')));
-  ok('2.12b ... usa o tom claro da mesma cor',
-     /fill="var\(--dia-parcial-claro\)"|fill="var\(--dia-fora-claro\)"/.test(comps));
-  ok('2.12b2 dia limpo continua no verde cheio',
-     payload.componentes.flatMap(c => c.dias)
-       .filter(d => d.cor === 'ok').every(d => d.conta_sla === true));
+  // A cor olha SO o que conta para o SLA: queda em deploy ou em maquina
+  // reduzida sai verde, junto com os dias limpos. Foi consequencia
+  // esperada de uma decisao deliberada, e a barra e o canal de "precisa
+  // de atencao". O evento nao some -- fica no tooltip.
+  const excluidos = payload.componentes.flatMap(c => c.dias)
+    .filter(d => d.segundos_excluidos > 0 && !d.segundos);
+  ok('2.12 queda so em deploy/maquina reduzida sai verde',
+     excluidos.every(d => d.cor === 'ok'), excluidos.length + ' dia(s)');
+  ok('2.12b ... mas o tooltip conta o que houve',
+     excluidos.length === 0 || /não conta no SLA/.test(comps));
+  ok('2.12b2 uma paleta so -- sem tons claros', !/-claro\)/.test(comps));
   ok('2.12b3 sem opacity nenhuma nas barras', !/opacity="/.test(comps));
+  ok('2.12b4 a legenda avisa que ha exclusao', true);
 
   // ---- o tooltip diz DE QUE HORA A QUE HORA ----
   // "1h17 fora" sozinho nao deixa investigar nada; com o horario da-se

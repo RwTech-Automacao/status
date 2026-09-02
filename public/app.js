@@ -41,12 +41,7 @@ const ESTADO_UPD = {investigating:'Investigando', identified:'Identificado',
                     monitoring:'Monitorando', resolved:'Resolvido'};
 
 // A cor vem do banco; aqui só a tradução para a paleta.
-//
-// Duas famílias, mesma matiz: a MATIZ diz o que aconteceu (nada, menos de
-// 1h, mais de 1h) e a INTENSIDADE diz se entrou no SLA. Um dia com queda
-// nunca é verde -- nem quando a queda não contou.
-const COR       = {vermelho:'var(--dia-fora)',        amarelo:'var(--dia-parcial)',       ok:'var(--ok)'};
-const COR_CLARA = {vermelho:'var(--dia-fora-claro)',  amarelo:'var(--dia-parcial-claro)', ok:'var(--ok)'};
+const COR = {vermelho:'var(--dia-fora)', amarelo:'var(--dia-parcial)', ok:'var(--ok)'};
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[<>&"]/g,
@@ -64,16 +59,14 @@ const esc = s => String(s ?? '').replace(/[<>&"]/g,
 // ---------------------------------------------------------------------
 function barras(dias){
   return dias.map((d,i) => {
-    // `conta_sla` vem do banco: houve queda que entrou na conta?
-    // Quando não entrou (só deploy ou máquina reduzida), a barra usa o tom
-    // CLARO da mesma cor -- âmbar claro para uma queda curta, vermelho
-    // claro para uma longa. Verde fica reservado para dia sem queda
-    // nenhuma.
-    const contou = d.conta_sla !== false;
+    // Dia cuja queda ficou toda em deploy ou em máquina reduzida: verde,
+    // igual a um dia limpo. Foi consequência esperada de uma decisão
+    // deliberada, e a barra é o canal de "precisa de atenção".
+    //
+    // O evento continua no tooltip -- some da cor, não do registro.
     const soExcluido = !d.segundos && d.segundos_excluidos > 0;
 
-    const paleta = contou ? COR : COR_CLARA;
-    const cor = paleta[d.cor] || 'var(--ok)';
+    const cor = COR[d.cor] || 'var(--ok)';
 
     // Tempo de RELÓGIO afetado, somado das faixas do dia. É diferente do
     // número do SLA porque o SLA é ponderado: 'Degradado' pesa 0,25, então
